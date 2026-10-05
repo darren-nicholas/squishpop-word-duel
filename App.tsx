@@ -538,6 +538,7 @@ function suggestForPhrase(phrase: string): string[] {
 }
 
 type Screen =
+  | 'loading'
   | 'whosPlaying'
   | 'addProfile'
   | 'start'
@@ -564,7 +565,7 @@ export default function App() {
     Fredoka_700Bold,
   });
 
-  const [screen, setScreen] = useState<Screen>('whosPlaying');
+  const [screen, setScreen] = useState<Screen>('loading');
   const [mode, setMode] = useState<Mode>('2player');
 
   // Profile system
@@ -581,6 +582,7 @@ export default function App() {
 
   // Hydrate profiles on mount
   useEffect(() => {
+    const splashStart = Date.now();
     (async () => {
       let loaded = await loadProfiles();
       const activeId = await loadActiveProfileId();
@@ -610,10 +612,24 @@ export default function App() {
       setProfiles(loaded);
       setActiveProfileId(activeId);
       setProfilesHydrated(true);
+
+      // Minimum splash duration so MD Studios branding registers
+      const MIN_SPLASH_MS = 1800;
+      const elapsed = Date.now() - splashStart;
+      if (elapsed < MIN_SPLASH_MS) {
+        await new Promise((r) => setTimeout(r, MIN_SPLASH_MS - elapsed));
+      }
+
+      // Routing: no profiles → create one; otherwise go to home (not player picker)
       if (loaded.length === 0) {
         setScreen('addProfile');
       } else {
-        setScreen('whosPlaying');
+        // If no active profile is saved, fall back to picker; else go straight home
+        if (activeId && loaded.find((p) => p.id === activeId)) {
+          setScreen('start');
+        } else {
+          setScreen('whosPlaying');
+        }
       }
     })();
   }, []);
@@ -1086,13 +1102,11 @@ export default function App() {
     (l) => !currentOpponentWord.includes(l)
   ).length;
 
-  if (!fontsLoaded || !profilesHydrated) {
+  if (!fontsLoaded || !profilesHydrated || screen === 'loading') {
     return (
       <View style={styles.container}>
-        <StatusBar style="auto" />
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Loading SquishPop...</Text>
-        </View>
+        <StatusBar style="light" />
+        <LoadingScreen />
       </View>
     );
   }
@@ -1416,6 +1430,131 @@ export default function App() {
   );
 }
 
+function LoadingScreen() {
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const logoScale = useRef(new Animated.Value(0.9)).current;
+  const titleOpacity = useRef(new Animated.Value(0)).current;
+  const dotScale = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(logoOpacity, {
+          toValue: 1,
+          duration: 650,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.spring(logoScale, {
+          toValue: 1,
+          tension: 50,
+          friction: 7,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.timing(titleOpacity, {
+        toValue: 1,
+        duration: 500,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    // The amber "constellation" dot pulse — subtle breathing animation
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotScale, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(dotScale, {
+          toValue: 0.6,
+          duration: 1200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#0F1420' }}>
+      <LinearGradient
+        colors={['#1A2340', '#0F1420', '#070A14'] as any}
+        style={StyleSheet.absoluteFill}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+      />
+
+      {/* Center stack: MD Studios wordmark + "presents" + "SquishPop Word Duel" */}
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+        <Animated.View
+          style={{
+            opacity: logoOpacity,
+            transform: [{ scale: logoScale }],
+            alignItems: 'center',
+          }}
+        >
+          <Image
+            source={require('./assets/md-studios-wordmark.png')}
+            fadeDuration={0}
+            style={{ width: 260, height: 46, resizeMode: 'contain', tintColor: '#F5F5F5' }}
+          />
+        </Animated.View>
+
+        <Animated.View style={{ opacity: titleOpacity, alignItems: 'center', marginTop: 36 }}>
+          <Text
+            style={{
+              fontFamily: FONT_SEMIBOLD,
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.5)',
+              letterSpacing: 4,
+              textTransform: 'uppercase',
+              marginBottom: 12,
+            }}
+          >
+            presents
+          </Text>
+          <OutlinedText size={38} color="#FFF2A8" outlineColor="#8A5F00" outlineWidth={3}>
+            SquishPop
+          </OutlinedText>
+          <View style={{ marginTop: -4 }}>
+            <OutlinedText size={22} color="#FFFFFF" outlineColor="#8A5F00" outlineWidth={2}>
+              Word Duel
+            </OutlinedText>
+          </View>
+        </Animated.View>
+      </View>
+
+      {/* Pulsing amber constellation dot — bottom center */}
+      <View style={{ position: 'absolute', bottom: 60, left: 0, right: 0, alignItems: 'center' }}>
+        <Animated.View
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: 5,
+            backgroundColor: '#F5A623',
+            transform: [{ scale: dotScale }],
+          }}
+        />
+        <Text
+          style={{
+            fontFamily: FONT_SEMIBOLD,
+            fontSize: 10,
+            color: 'rgba(255,255,255,0.3)',
+            letterSpacing: 2,
+            marginTop: 12,
+          }}
+        >
+          LOADING...
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function TurnFeedbackOverlay({
   feedback,
 }: {
@@ -1721,6 +1860,24 @@ function StartScreen({
           </View>
         </Pressable>
       )}
+
+      {/* MD Studios footer badge — bottom center */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          bottom: 10,
+          left: 0,
+          right: 0,
+          alignItems: 'center',
+        }}
+      >
+        <Image
+          source={require('./assets/md-studios-wordmark.png')}
+          fadeDuration={0}
+          style={{ width: 110, height: 20, resizeMode: 'contain', opacity: 0.45, tintColor: '#2A1A00' }}
+        />
+      </View>
 
       {/* DEV rarity picker modal */}
       <Modal visible={devPickerOpen} transparent={true} animationType="fade" onRequestClose={() => setDevPickerOpen(false)}>
