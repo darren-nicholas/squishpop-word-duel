@@ -63,9 +63,12 @@ import {
   canWatchAd,
   recordAdWatch,
   AD_DAILY_LIMIT,
+  INTERSTITIAL_GRACE_PUZZLES,
+  INTERSTITIAL_EVERY_N_PUZZLES,
+  INTERSTITIAL_MIN_ROUND_MS,
   type Profile,
 } from './profiles';
-import { watchAdForReward, COINS_PER_AD } from './rewardedAdService';
+import { watchAdForReward, showInterstitial, COINS_PER_AD } from './rewardedAdService';
 
 const FONT_REGULAR = 'Fredoka_400Regular';
 const FONT_SEMIBOLD = 'Fredoka_600SemiBold';
@@ -581,9 +584,10 @@ export default function App() {
   const [profilesHydrated, setProfilesHydrated] = useState(false);
   const [splashFadingOut, setSplashFadingOut] = useState(false);
 
-  // Rewarded ad state
-  const [adWatching, setAdWatching] = useState<null | 'coins' | 'freePull'>(null);
+  // Rewarded + interstitial ad state
+  const [adWatching, setAdWatching] = useState<null | 'coins' | 'freePull' | 'interstitial'>(null);
   const [adRewardCoins, setAdRewardCoins] = useState<number | null>(null);
+  const roundStartedAtRef = useRef<number>(Date.now());
 
   const activeProfile =
     profiles.find((p) => p.id === activeProfileId) ?? null;
@@ -617,6 +621,7 @@ export default function App() {
         ...p,
         coins: typeof p.coins === 'number' ? p.coins : 25,
         isVip: typeof p.isVip === 'boolean' ? p.isVip : false,
+        puzzlesPlayed: typeof p.puzzlesPlayed === 'number' ? p.puzzlesPlayed : 0,
       }));
 
       setProfiles(loaded);
@@ -676,6 +681,32 @@ export default function App() {
     const newProfile = createProfile(name, avatarId);
     setProfiles((prev) => [...prev, newProfile]);
     return newProfile;
+  }
+
+  // Interstitial gate: increments the lifetime puzzle counter, then shows an
+  // interstitial if we're past the grace period AND the round took long enough
+  // to justify interrupting. VIP skips entirely. Always runs the callback.
+  async function maybeShowInterstitialThen(cb: () => void) {
+    if (!activeProfile) return cb();
+    if (activeProfile.isVip) return cb();
+
+    const roundDurationMs = Date.now() - roundStartedAtRef.current;
+    const newPuzzleCount = (activeProfile.puzzlesPlayed ?? 0) + 1;
+    updateProfile(activeProfile.id, (p) => ({
+      ...p,
+      puzzlesPlayed: (p.puzzlesPlayed ?? 0) + 1,
+    }));
+
+    const beyondGrace = newPuzzleCount > INTERSTITIAL_GRACE_PUZZLES;
+    const onCadence =
+      (newPuzzleCount - (INTERSTITIAL_GRACE_PUZZLES + 1)) % INTERSTITIAL_EVERY_N_PUZZLES === 0;
+    const longEnough = roundDurationMs >= INTERSTITIAL_MIN_ROUND_MS;
+    if (!beyondGrace || !onCadence || !longEnough) return cb();
+
+    setAdWatching('interstitial');
+    await showInterstitial();
+    setAdWatching(null);
+    cb();
   }
 
   async function handleWatchAd(type: 'coins' | 'freePull') {
@@ -775,6 +806,7 @@ export default function App() {
     setPlayerAName(activeProfile?.name ?? 'Player A');
     setPlayerBName('Player B');
     setFirstPlayerThisRound('A');
+    roundStartedAtRef.current = Date.now();
     setScreen('nameEntry');
   }
 
@@ -809,6 +841,7 @@ export default function App() {
     setLastEarnedSquishy(null);
     setHintsUsedThisRound(0);
     setExtraLivesThisRound(0);
+    roundStartedAtRef.current = Date.now();
     setScreen('playing');
   }
 
@@ -823,6 +856,7 @@ export default function App() {
     setSoloGuessed([]);
     setSoloWon(false);
     setLastEarnedSquishy(null);
+    roundStartedAtRef.current = Date.now();
     setScreen('playing');
   }
 
@@ -840,6 +874,7 @@ export default function App() {
     setLastEarnedSquishy(null);
     setHintsUsedThisRound(0);
     setExtraLivesThisRound(0);
+    roundStartedAtRef.current = Date.now();
     setScreen('playerAEntry');
   }
 
@@ -1345,7 +1380,7 @@ export default function App() {
           lifetimeShelfB={shelfB}
           roundsWonA={roundsWonA}
           roundsWonB={roundsWonB}
-          onNextRound={startNextRound}
+          onNextRound={() => maybeShowInterstitialThen(startNextRound)}
           onHome={() => setScreen('start')}
           onTrophyRoom={() => setScreen('trophyRoom')}
         />
@@ -1358,7 +1393,7 @@ export default function App() {
           category={soloCategory}
           earnedSquishy={lastEarnedSquishy}
           winStreak={soloWinStreak}
-          onNextWord={startNextSoloRound}
+          onNextWord={() => maybeShowInterstitialThen(startNextSoloRound)}
           onChangeCategory={() => setScreen('categorySelect')}
           onHome={() => setScreen('start')}
         />
@@ -1384,7 +1419,7 @@ export default function App() {
           }
           roundsWonA={roundsWonA}
           roundsWonB={roundsWonB}
-          onNewMatch={startNewMatch}
+          onNewMatch={() => maybeShowInterstitialThen(startNewMatch)}
           onHome={() => setScreen('start')}
         />
       )}

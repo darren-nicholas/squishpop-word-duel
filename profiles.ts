@@ -17,7 +17,17 @@ export type Profile = {
   isVip: boolean; // unlocks Beyond-Legendary Vault + weekly drops
   coins: number; // currency earned by selling duplicates, spent on hints
   adWatches?: { date: string; freePull: number; coins: number }; // rewarded-ad daily counters
+  puzzlesPlayed?: number; // lifetime completed rounds, used for interstitial grace period
 };
+
+// First N completed rounds (lifetime) are ad-free. After that, interstitials
+// show on a cadence instead of every round, to keep the kid-game feel.
+export const INTERSTITIAL_GRACE_PUZZLES = 10;
+// Show an interstitial every Nth puzzle after the grace period
+// (so with grace=10 and every=3: ads on puzzles 11, 14, 17, 20, ...).
+export const INTERSTITIAL_EVERY_N_PUZZLES = 3;
+// Skip the interstitial if the just-finished round took less than this many ms.
+export const INTERSTITIAL_MIN_ROUND_MS = 60_000;
 
 export type AdRewardType = 'freePull' | 'coins';
 export const AD_DAILY_LIMIT = 3;
