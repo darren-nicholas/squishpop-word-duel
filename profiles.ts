@@ -16,7 +16,41 @@ export type Profile = {
   legendariesPulled: number;
   isVip: boolean; // unlocks Beyond-Legendary Vault + weekly drops
   coins: number; // currency earned by selling duplicates, spent on hints
+  adWatches?: { date: string; freePull: number; coins: number }; // rewarded-ad daily counters
 };
+
+export type AdRewardType = 'freePull' | 'coins';
+export const AD_DAILY_LIMIT = 3;
+
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function getAdWatchesToday(profile: Profile): { freePull: number; coins: number } {
+  const today = todayStr();
+  if (!profile.adWatches || profile.adWatches.date !== today) {
+    return { freePull: 0, coins: 0 };
+  }
+  return { freePull: profile.adWatches.freePull, coins: profile.adWatches.coins };
+}
+
+export function canWatchAd(profile: Profile, type: AdRewardType): boolean {
+  return getAdWatchesToday(profile)[type] < AD_DAILY_LIMIT;
+}
+
+export function recordAdWatch(profile: Profile, type: AdRewardType): Profile {
+  const today = todayStr();
+  const current = getAdWatchesToday(profile);
+  return {
+    ...profile,
+    adWatches: {
+      date: today,
+      freePull: type === 'freePull' ? current.freePull + 1 : current.freePull,
+      coins: type === 'coins' ? current.coins + 1 : current.coins,
+    },
+  };
+}
 
 // Coin values per rarity when selling a duplicate
 export const COIN_VALUES: Record<string, number> = {
@@ -74,7 +108,7 @@ export function createProfile(name: string, avatarId: string): Profile {
     matchesPlayed: 0,
     legendariesPulled: 0,
     isVip: false,
-    coins: 10, // starter bonus — enough to try a hint
+    coins: 25, // starter bonus — enough to try a hint on round 1
   };
 }
 

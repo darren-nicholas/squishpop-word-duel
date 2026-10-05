@@ -59,8 +59,13 @@ import {
   spendCoins,
   addCoins,
   coinValueFor,
+  getAdWatchesToday,
+  canWatchAd,
+  recordAdWatch,
+  AD_DAILY_LIMIT,
   type Profile,
 } from './profiles';
+import { watchAdForReward, COINS_PER_AD } from './rewardedAdService';
 
 const FONT_REGULAR = 'Fredoka_400Regular';
 const FONT_SEMIBOLD = 'Fredoka_600SemiBold';
@@ -576,6 +581,10 @@ export default function App() {
   const [profilesHydrated, setProfilesHydrated] = useState(false);
   const [splashFadingOut, setSplashFadingOut] = useState(false);
 
+  // Rewarded ad state
+  const [adWatching, setAdWatching] = useState<null | 'coins' | 'freePull'>(null);
+  const [adRewardCoins, setAdRewardCoins] = useState<number | null>(null);
+
   const activeProfile =
     profiles.find((p) => p.id === activeProfileId) ?? null;
   const profileA = profiles.find((p) => p.id === profileAId) ?? null;
@@ -606,7 +615,7 @@ export default function App() {
       // Schema migration: backfill coins for older profiles that pre-date the economy
       loaded = loaded.map((p) => ({
         ...p,
-        coins: typeof p.coins === 'number' ? p.coins : 10,
+        coins: typeof p.coins === 'number' ? p.coins : 25,
         isVip: typeof p.isVip === 'boolean' ? p.isVip : false,
       }));
 
@@ -669,9 +678,32 @@ export default function App() {
     return newProfile;
   }
 
+  async function handleWatchAd(type: 'coins' | 'freePull') {
+    if (!activeProfile) return;
+    if (!canWatchAd(activeProfile, type)) return;
+    if (adWatching) return;
+    setAdWatching(type);
+    const result = await watchAdForReward(type);
+    setAdWatching(null);
+    if (!result.success) return;
+    if (type === 'coins') {
+      updateProfile(activeProfile.id, (p) => recordAdWatch(addCoins(p, COINS_PER_AD), 'coins'));
+      setAdRewardCoins(COINS_PER_AD);
+    } else {
+      const squishy = randomSquishy(activeProfile.isVip);
+      updateProfile(activeProfile.id, (p) =>
+        recordAdWatch(awardSquishiesToProfile(p, [squishy]), 'freePull')
+      );
+      setLastEarnedSquishy(squishy);
+      setPendingReveal({ squishy, nextScreen: 'trophyRoom', autoOpenCard: true });
+      setScreen('blindBoxReveal');
+    }
+  }
+
   const [pendingReveal, setPendingReveal] = useState<{
     squishy: Squishy;
     nextScreen: Screen;
+    autoOpenCard?: boolean;
   } | null>(null);
 
   const [wordA, setWordA] = useState('');
@@ -1172,6 +1204,8 @@ export default function App() {
           onSellSquishy={(squishy) => {
             updateProfile(activeProfile.id, (p) => sellOneDuplicate(p, squishy.id));
           }}
+          onWatchAdForFreePull={() => handleWatchAd('freePull')}
+          freePullsRemaining={AD_DAILY_LIMIT - getAdWatchesToday(activeProfile).freePull}
         />
       )}
 
@@ -1263,6 +1297,7 @@ export default function App() {
       {screen === 'blindBoxReveal' && pendingReveal && (
         <BlindBoxReveal
           squishy={pendingReveal.squishy}
+          autoOpenCard={pendingReveal.autoOpenCard}
           onContinue={() => {
             const next = pendingReveal.nextScreen;
             setPendingReveal(null);
@@ -1289,6 +1324,8 @@ export default function App() {
           activeProfile={activeProfile}
           hintsUsedThisRound={hintsUsedThisRound}
           onBuyHint={buyHint}
+          onWatchAdForCoins={() => handleWatchAd('coins')}
+          coinAdsRemaining={activeProfile ? AD_DAILY_LIMIT - getAdWatchesToday(activeProfile).coins : 0}
         />
       )}
 
@@ -1378,14 +1415,21 @@ export default function App() {
             >
               <Text style={styles.modalTitle}>How to Play</Text>
               <Text style={{ fontSize: 13, color: '#1a1613', lineHeight: 20, marginBottom: 12 }}>
-                SquishPop Word Duel is a 2-player hangman game. Pass the phone back and forth. Collect squishies forever.
+                SquishPop Word Duel is a secret word game you can play solo, or with a friend. Guess the hidden word and collect squishies forever.
               </Text>
 
               <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
                 Setup
               </Text>
               <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
-                Each player types a secret word. Pass the phone — only you see your own word.
+                Each player picks a secret word OR phrase (up to 25 characters — "Taylor Swift" and "pepperoni pizza" both work). Pass the phone — only you see your own word.
+              </Text>
+
+              <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
+                Meet zAIa
+              </Text>
+              <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
+                Your purple plush AI buddy checks if your word is real. If she doesn't know it, she'll ask: "Hmm, I don't know this one." You decide if it counts.
               </Text>
 
               <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
@@ -1410,15 +1454,37 @@ export default function App() {
                 Winning Squishies
               </Text>
               <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
-                Win a round → earn a squishy for your collection (yours forever!){'\n'}
-                First to 5 wins the match → bonus squishy with much better rare odds
+                Win a round → earn a squishy from one of 10 themed shelves (Rainbow, Halloween, Dessert, Floral, Sea, Dumpling and more){'\n'}
+                First to 5 wins the match → bonus squishy with much better rare odds{'\n'}
+                Yours forever — your collection never resets
+              </Text>
+
+              <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
+                Themed Blind Boxes
+              </Text>
+              <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
+                Every shelf has its own box color — Halloween squishies arrive in orange & black boxes, Rainbow in rainbow boxes. Shake to open, then meet your new squishy!
+              </Text>
+
+              <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
+                💰 Coins & 💡 Hints
+              </Text>
+              <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
+                You start with 💰 25 coins. Got a duplicate squishy? Sell it for coins (Common 5 · Rare 25 · Legendary 100 · Beyond-Legendary way more).{'\n\n'}
+                Stuck on a word? Spend coins on a Hint (up to 2 per round):{'\n'}
+                🎯 Reveal First Letter — 15{'\n'}
+                🔤 Reveal a Letter — 20{'\n'}
+                🎵 Reveal All Vowels — 30{'\n'}
+                🆘 Extra Life — 40{'\n'}
+                🏃 Skip Round — 50{'\n\n'}
+                🎬 Low on coins? Watch a short ad for 💰 100. In the Trophy Room, you can also watch an ad to earn a free squishy pull. Both are capped at 3 per day.
               </Text>
 
               <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
                 Rarity
               </Text>
               <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 16 }}>
-                Common · 🥈 Rare · 🏆 Legendary{'\n'}
+                Common · 🥈 Rare · 🏆 Legendary · 💎 Beyond-Legendary (VIP Vault){'\n'}
                 Chase the rare ones!
               </Text>
 
@@ -1432,7 +1498,67 @@ export default function App() {
           </View>
         </View>
       </Modal>
+
+      <WatchingAdOverlay visible={adWatching !== null} />
+      <AdCoinRewardOverlay
+        coins={adRewardCoins}
+        onClose={() => setAdRewardCoins(null)}
+      />
     </View>
+  );
+}
+
+function WatchingAdOverlay({ visible }: { visible: boolean }) {
+  const [dots, setDots] = useState('');
+  useEffect(() => {
+    if (!visible) return;
+    const t = setInterval(() => {
+      setDots((d) => (d.length >= 3 ? '' : d + '.'));
+    }, 400);
+    return () => clearInterval(t);
+  }, [visible]);
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ alignItems: 'center', padding: 24 }}>
+          <Text style={{ fontSize: 48, marginBottom: 16 }}>🎬</Text>
+          <OutlinedText size={22} color="#FFF2A8" outlineColor="#8A5F00" outlineWidth={2}>
+            Watching Ad{dots}
+          </OutlinedText>
+          <Text style={{ fontFamily: FONT_SEMIBOLD, fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 12, letterSpacing: 1.5 }}>
+            (ad simulator — SDK coming soon)
+          </Text>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function AdCoinRewardOverlay({
+  coins,
+  onClose,
+}: {
+  coins: number | null;
+  onClose: () => void;
+}) {
+  const visible = coins !== null;
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', alignItems: 'center', justifyContent: 'center' }} onPress={onClose}>
+        <View style={{ backgroundColor: '#FFF8EA', borderRadius: 24, padding: 28, borderWidth: 3, borderColor: '#8A5F00', alignItems: 'center', minWidth: 280 }}>
+          <Text style={{ fontSize: 48, marginBottom: 10 }}>🎉</Text>
+          <OutlinedText size={28} color="#FFF2A8" outlineColor="#8A5F00" outlineWidth={2}>
+            +💰 {coins ?? 0}
+          </OutlinedText>
+          <Text style={{ fontFamily: FONT_SEMIBOLD, fontSize: 14, color: '#8A5F00', marginTop: 8 }}>
+            Coins added to your wallet!
+          </Text>
+          <Pressable onPress={onClose} style={{ marginTop: 18, backgroundColor: '#FFB800', paddingHorizontal: 28, paddingVertical: 10, borderRadius: 100, borderWidth: 2, borderColor: '#8A5F00' }}>
+            <Text style={{ fontFamily: FONT_BOLD, fontSize: 14, color: '#2A1A00' }}>Yay!</Text>
+          </Pressable>
+        </View>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -3090,10 +3216,14 @@ function TrophyRoomScreen({
   profile,
   onBack,
   onSellSquishy,
+  onWatchAdForFreePull,
+  freePullsRemaining,
 }: {
   profile: Profile;
   onBack: () => void;
   onSellSquishy: (squishy: Squishy) => void;
+  onWatchAdForFreePull: () => void;
+  freePullsRemaining: number;
 }) {
   const owned = uniqueSquishyIds(profile);
   const avatar = getAvatar(profile.avatarId);
@@ -3135,6 +3265,40 @@ function TrophyRoomScreen({
               {owned.size} / 80 collected  ·  💰 {profile.coins}
             </Text>
           </View>
+
+          <Pressable
+            onPress={freePullsRemaining > 0 ? onWatchAdForFreePull : undefined}
+            disabled={freePullsRemaining <= 0}
+            style={{
+              marginTop: 8,
+              backgroundColor: freePullsRemaining > 0 ? '#FFB800' : 'rgba(255,255,255,0.15)',
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderRadius: 100,
+              borderWidth: 2,
+              borderColor: freePullsRemaining > 0 ? '#8A3F00' : 'rgba(255,255,255,0.25)',
+              flexDirection: 'row',
+              alignItems: 'center',
+              opacity: freePullsRemaining > 0 ? 1 : 0.6,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 3 },
+              shadowOpacity: 0.3,
+              shadowRadius: 4,
+              elevation: 5,
+            }}
+          >
+            <Text style={{ fontSize: 16, marginRight: 6 }}>🎬</Text>
+            <Text style={{ fontFamily: FONT_BOLD, fontSize: 13, color: freePullsRemaining > 0 ? '#2A1A00' : '#FFECC9' }}>
+              {freePullsRemaining > 0 ? 'Watch for a Free Squishy!' : 'Free squishies back tomorrow'}
+            </Text>
+            {freePullsRemaining > 0 && (
+              <View style={{ marginLeft: 8, backgroundColor: '#2A1A00', paddingHorizontal: 7, paddingVertical: 1, borderRadius: 100 }}>
+                <Text style={{ fontFamily: FONT_BOLD, fontSize: 10, color: '#FFECC9' }}>
+                  {freePullsRemaining}/{AD_DAILY_LIMIT}
+                </Text>
+              </View>
+            )}
+          </Pressable>
         </View>
       </SafeAreaView>
 
@@ -3878,6 +4042,8 @@ function GameScreen({
   activeProfile,
   hintsUsedThisRound,
   onBuyHint,
+  onWatchAdForCoins,
+  coinAdsRemaining,
 }: {
   mode: Mode;
   currentPlayer: Player;
@@ -3895,6 +4061,8 @@ function GameScreen({
   activeProfile: Profile | null;
   hintsUsedThisRound: number;
   onBuyHint: (type: HintType, cost: number) => void;
+  onWatchAdForCoins: () => void;
+  coinAdsRemaining: number;
 }) {
   const [hintMenuOpen, setHintMenuOpen] = useState(false);
   return (
@@ -4007,6 +4175,41 @@ function GameScreen({
                 You have 💰 {activeProfile?.coins ?? 0}  ·  Used {hintsUsedThisRound}/{MAX_HINTS_PER_ROUND} this round
               </Text>
             </View>
+
+            {(activeProfile?.coins ?? 0) < 15 && coinAdsRemaining > 0 && (
+              <Pressable
+                onPress={() => {
+                  setHintMenuOpen(false);
+                  onWatchAdForCoins();
+                }}
+                style={{
+                  backgroundColor: '#FFB800',
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  marginBottom: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  borderWidth: 2,
+                  borderColor: '#8A3F00',
+                }}
+              >
+                <Text style={{ fontSize: 22, marginRight: 10 }}>🎬</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontFamily: FONT_BOLD, fontSize: 13, color: '#2A1A00' }}>
+                    Watch Ad — Get 💰 {COINS_PER_AD}
+                  </Text>
+                  <Text style={{ fontFamily: FONT_SEMIBOLD, fontSize: 10, color: '#2A1A00', marginTop: 1, opacity: 0.75 }}>
+                    Free coins to afford a hint
+                  </Text>
+                </View>
+                <View style={{ backgroundColor: '#2A1A00', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 100 }}>
+                  <Text style={{ fontFamily: FONT_BOLD, fontSize: 10, color: '#FFECC9' }}>
+                    {coinAdsRemaining}/{AD_DAILY_LIMIT}
+                  </Text>
+                </View>
+              </Pressable>
+            )}
 
             {HINT_OPTIONS.map((hint) => {
               const canAfford = (activeProfile?.coins ?? 0) >= hint.cost;
@@ -5228,14 +5431,25 @@ function LegendaryFanfare({ active }: { active: boolean }) {
 function BlindBoxReveal({
   squishy,
   onContinue,
+  autoOpenCard = false,
 }: {
   squishy: Squishy;
   onContinue: () => void;
+  autoOpenCard?: boolean;
 }) {
   const [stage, setStage] = useState<
     'appearing' | 'shaking' | 'opening' | 'revealed'
   >('appearing');
   const [cardVisible, setCardVisible] = useState(false);
+
+  // When the reveal animation lands, auto-open the trading card if requested
+  // (used by rewarded ad free-pulls so the "Meet your squishy" card appears without needing a tap)
+  useEffect(() => {
+    if (!autoOpenCard) return;
+    if (stage !== 'revealed') return;
+    const t = setTimeout(() => setCardVisible(true), 600);
+    return () => clearTimeout(t);
+  }, [autoOpenCard, stage]);
 
   const boxScale = useRef(new Animated.Value(0)).current;
   const boxRotate = useRef(new Animated.Value(0)).current;

@@ -139,7 +139,7 @@ export const SQUISHIES: Squishy[] = [
   { id: 'creature-05', name: 'Boba', species: 'Panda', birthday: 'August 24', favorite: { category: 'Favorite food', value: 'bamboo' }, rarity: 'rare', shelf: 'creature', image: require('./assets/images/squishies/creature/creature-05-panda.png') },
   { id: 'creature-06', name: 'Hop', species: 'Frog', birthday: 'April 20', favorite: { category: 'Favorite game', value: 'hop-skip-jump' }, rarity: 'common', shelf: 'creature', image: require('./assets/images/squishies/creature/creature-06-frog.png') },
   { id: 'creature-07', name: 'Rex', species: 'Dino', birthday: 'January 2', favorite: { category: 'Favorite movie', value: 'Jurassic Park' }, rarity: 'rare', shelf: 'creature', image: require('./assets/images/squishies/creature/creature-07-dinosaur.png') },
-  { id: 'creature-08', name: 'Ember', species: 'Golden Dragon', birthday: 'August 29', favorite: { category: 'Favorite food', value: 'pepper 🌶️' }, rarity: 'legendary', shelf: 'creature', image: require('./assets/images/squishies/creature/creature-08-dragon-legendary.png') },
+  { id: 'creature-08', name: 'Ember', species: 'Golden Dragon', birthday: 'January 11', favorite: { category: 'Favorite food', value: 'pepper 🌶️' }, rarity: 'legendary', shelf: 'creature', image: require('./assets/images/squishies/creature/creature-08-dragon-legendary.png') },
 
   // 🐕 Dogs
   { id: 'dogs-01', name: 'Blizzard', species: 'Husky', birthday: 'February 11', favorite: { category: 'Favorite activity', value: 'pulling sleds' }, rarity: 'common', shelf: 'dogs', image: require('./assets/images/squishies/dogs/dogs-01-husky.png') },
