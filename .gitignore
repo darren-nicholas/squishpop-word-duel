@@ -39,3 +39,24 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+
+# API keys - never commit
+apiKeys.ts
+.env
+.env.local
+
+# Python virtualenv for image processing (local-only)
+.venv-rembg/
+
+# Generation log (noisy, rebuildable)
+generation.log
+
+# Image processing backups — pre-rembg originals, pre-downsize full-res, archived removed shelves.
+# Can be regenerated via the prompts_*.json + scripts. ~175MB total.
+assets/images-backup-rgb/
+assets/avatars-backup-rgb/
+assets/images/squishies-fullres/
+assets/images/squishies-archive/
+assets/images/boxes-archive/
+assets/images/room/cabinet-frame-original.png
