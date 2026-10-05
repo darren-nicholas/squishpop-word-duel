@@ -104,14 +104,60 @@ Two testing shortcuts live on the Start screen top-left:
 
 Strip these before App Store submission.
 
-## Known production-readiness blockers
+---
 
-- 🔑 **Anthropic key is client-side.** Must be moved behind a backend proxy before shipping (currently in `aiValidate.ts`, bundled into the IPA).
-- 🏷️ **No app icon / splash branding** (placeholder Expo defaults).
-- 📜 **No privacy policy / privacy manifest** (Apple requires both).
-- 👶 **No parental gate** (required for Kids category + IAP flow).
-- 💰 **IAP not wired** — VIP purchase button is decorative. Needs `expo-in-app-purchases` + Apple receipt validation.
-- 📊 **No analytics / crash reporting.**
+# 📋 Roadmap / To-Do
+
+The game is **feature-complete for playtesting** but has distinct work-tracks before App Store submission. Grouped by priority.
+
+## 🚀 Production readiness (required before any public launch)
+
+- [ ] **Backend proxy for Anthropic API key** — `aiValidate.ts` currently calls Claude Haiku directly from the device. Key is bundled into the IPA and extractable. Needs a tiny proxy (Firebase Functions / Cloudflare Worker / Vercel edge) that holds the key server-side.
+- [ ] **App icon + splash screen** — currently Expo defaults.
+- [ ] **Privacy policy** (public URL) and **Privacy Manifest** (per Apple 2024+ requirement).
+- [ ] **Parental gate** before any IAP flow (COPPA / Kids-category requirement).
+- [ ] **Crash reporting** — Sentry or Bugsnag integration.
+- [ ] **Analytics** — Mixpanel / PostHog / Expo Analytics for retention + engagement.
+- [ ] **Remove DEV buttons** on Start screen (🏆 PULL + 📦 BOXES).
+- [ ] **Collection-reset flag** — currently hardcoded `squishpop.collectionResetV3`. Needs to be a build-time constant or server-driven for safe production rollouts.
+
+## 💰 Monetization layer (currently decorative)
+
+- [ ] **Apple IAP wiring** via `expo-in-app-purchases` for the $6.99 VIP Pass.
+- [ ] **Receipt validation** (either device-side via StoreKit 2 or server-side proxy).
+- [ ] **Weekly VIP drop mechanic** — Sunday gift-box on home screen for VIP users; cadence tracking; separate pull odds (60% rare / 35% legendary / 5% BL).
+- [ ] **"Unlock Vault — $6.99" button wiring** (currently decorative on Trophy Room).
+- [ ] **Expansion pack infrastructure** (future $2.99 themed shelf drops).
+- [ ] **VIP entitlement persistence** across devices (currently local-only).
+
+## 🎨 UX / Polish
+
+- [ ] **Sound effects** — reveal chimes, box pop, correct/wrong guesses, legendary trumpet (via `expo-av`).
+- [ ] **Themed solo = themed pulls** — playing *Sea Creatures* words should pull from the Sea shelf, not random. Closes the solo-mode feedback loop.
+- [ ] **Rules screen refresh** — "How to Play" was written pre-coin-economy and pre-VIP. Needs updating.
+- [ ] **Avatar downsize** to 512px (same perf win we did for squishies). ~5-minute Python pass.
+- [ ] **Theme-specific VIP box variants** — Chrome / Crystal / Shadow / Mythic each get their own box (currently one unified VIP box).
+- [ ] **Mythic character backstories** — 10 shelf-lord characters currently have names but no lore.
+- [ ] **First-run tutorial** — currently no onboarding; first-time users dropped into Who's Playing.
+
+## 📦 Content pipeline (ongoing after launch)
+
+- [ ] **Monthly new shelf drops** — Space, Sports, Back-to-School, Summer Beach, etc.
+- [ ] **More solo word categories** — currently 9 (Animals, Food, Movies, Sports, Places, Halloween, Jobs, Nature, Weather).
+- [ ] **Localization** — if going international, i18n for word banks + UI text.
+- [ ] **Weekly content calendar** — one new squishy per week to feed the VIP weekly drop.
+
+## 🧪 Real-world validation
+
+- [ ] **Formal play session with Cora + Aubrey + friends** — gather kid-perspective feedback at scale.
+- [ ] **TestFlight distribution** — closed beta with a few families once production hardening is done.
+
+## 🐛 Known tech debt
+
+- [ ] One pre-existing `LinearGradient` TypeScript strict warning (runtime fine, cosmetic).
+- [ ] `apiKeys.ts` approach is a stopgap — formal env-var pipeline needed before CI/CD.
+
+---
 
 ## Related docs (vault)
 
