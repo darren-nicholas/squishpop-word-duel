@@ -574,6 +574,7 @@ export default function App() {
   const [profileAId, setProfileAId] = useState<string | null>(null);
   const [profileBId, setProfileBId] = useState<string | null>(null);
   const [profilesHydrated, setProfilesHydrated] = useState(false);
+  const [splashFadingOut, setSplashFadingOut] = useState(false);
 
   const activeProfile =
     profiles.find((p) => p.id === activeProfileId) ?? null;
@@ -613,12 +614,17 @@ export default function App() {
       setActiveProfileId(activeId);
       setProfilesHydrated(true);
 
-      // Minimum splash duration so MD Studios branding registers
-      const MIN_SPLASH_MS = 1800;
+      // Minimum splash duration so MD Studios branding + credits register
+      const MIN_SPLASH_MS = 3800;
+      const FADE_OUT_MS = 600;
       const elapsed = Date.now() - splashStart;
       if (elapsed < MIN_SPLASH_MS) {
         await new Promise((r) => setTimeout(r, MIN_SPLASH_MS - elapsed));
       }
+
+      // Trigger fade-out, then wait for it to complete before routing
+      setSplashFadingOut(true);
+      await new Promise((r) => setTimeout(r, FADE_OUT_MS));
 
       // Routing: no profiles → create one; otherwise go to home (not player picker)
       if (loaded.length === 0) {
@@ -1106,7 +1112,7 @@ export default function App() {
     return (
       <View style={styles.container}>
         <StatusBar style="light" />
-        <LoadingScreen />
+        <LoadingScreen fadingOut={splashFadingOut} />
       </View>
     );
   }
@@ -1430,11 +1436,23 @@ export default function App() {
   );
 }
 
-function LoadingScreen() {
+function LoadingScreen({ fadingOut = false }: { fadingOut?: boolean }) {
   const logoOpacity = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0.9)).current;
   const titleOpacity = useRef(new Animated.Value(0)).current;
   const dotScale = useRef(new Animated.Value(0.3)).current;
+  const screenOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (fadingOut) {
+      Animated.timing(screenOpacity, {
+        toValue: 0,
+        duration: 600,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [fadingOut]);
 
   useEffect(() => {
     Animated.sequence([
@@ -1480,7 +1498,7 @@ function LoadingScreen() {
   }, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0F1420' }}>
+    <Animated.View style={{ flex: 1, backgroundColor: '#0F1420', opacity: screenOpacity }}>
       <LinearGradient
         colors={['#1A2340', '#0F1420', '#070A14'] as any}
         style={StyleSheet.absoluteFill}
@@ -1525,6 +1543,32 @@ function LoadingScreen() {
               Word Duel
             </OutlinedText>
           </View>
+
+          <Text
+            style={{
+              fontFamily: FONT_SEMIBOLD,
+              fontSize: 13,
+              color: 'rgba(255,255,255,0.78)',
+              textAlign: 'center',
+              marginTop: 28,
+              letterSpacing: 0.3,
+            }}
+          >
+            Designed by Cora, Aubrey, and their Dad
+          </Text>
+          <Text
+            style={{
+              fontFamily: FONT_SEMIBOLD,
+              fontSize: 10,
+              color: 'rgba(255,255,255,0.4)',
+              textAlign: 'center',
+              marginTop: 8,
+              letterSpacing: 3,
+              textTransform: 'uppercase',
+            }}
+          >
+            Powered by MDStudios
+          </Text>
         </Animated.View>
       </View>
 
@@ -1551,7 +1595,7 @@ function LoadingScreen() {
           LOADING...
         </Text>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -1662,8 +1706,8 @@ function StartScreen({
         <Image source={heroSquishy.image} style={{ position: 'absolute', bottom: 90, width: 160, height: 160, resizeMode: 'contain' }} />
       </View>
 
-      {/* "Collect Them All!" sticker tag — top center */}
-      <View style={{ position: 'absolute', top: 80, alignSelf: 'center', transform: [{ rotate: '-6deg' }], backgroundColor: '#FFB800', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 24, borderWidth: 3, borderColor: '#8A3F00', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5, elevation: 8, zIndex: 5 }} pointerEvents="none">
+      {/* "Collect Them All!" sticker tag — tucked below the player badge, above the second teaser row */}
+      <View style={{ position: 'absolute', top: 135, alignSelf: 'center', transform: [{ rotate: '-6deg' }], backgroundColor: '#FFB800', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 24, borderWidth: 3, borderColor: '#8A3F00', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5, elevation: 8, zIndex: 5 }} pointerEvents="none">
         <Text style={{ fontFamily: FONT_BOLD, fontSize: 14, color: '#2A1A00', letterSpacing: 0.8, textAlign: 'center' }}>⭐ COLLECT THEM ALL! ⭐</Text>
       </View>
 
