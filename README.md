@@ -123,12 +123,29 @@ The game is **feature-complete for playtesting** but has distinct work-tracks be
 
 ## 💰 Monetization layer (currently decorative)
 
-- [ ] **Apple IAP wiring** via `expo-in-app-purchases` for the $6.99 VIP Pass.
-- [ ] **Receipt validation** (either device-side via StoreKit 2 or server-side proxy).
-- [ ] **Weekly VIP drop mechanic** — Sunday gift-box on home screen for VIP users; cadence tracking; separate pull odds (60% rare / 35% legendary / 5% BL).
-- [ ] **"Unlock Vault — $6.99" button wiring** (currently decorative on Trophy Room).
-- [ ] **Expansion pack infrastructure** (future $2.99 themed shelf drops).
-- [ ] **VIP entitlement persistence** across devices (currently local-only).
+### Ad system (not yet built)
+
+**Three-phase funnel — hook players before any friction:**
+
+| Phase | Trigger | Behavior |
+|---|---|---|
+| 1 — **Hook** | First **10 puzzles** post-install | 100% ad-free. Build the collection, fall in love. |
+| 2 — **Free with ads** | Puzzle 11+ | Interstitial after each puzzle. Skip if gameplay < 60s (don't interrupt rapid guessing). Hard cap: 1 ad per 60 seconds total. |
+| 3 — **VIP removes ads** | $6.99 one-time purchase | No ads ever + Beyond-Legendary Vault + weekly drops. |
+
+- [ ] **Puzzle counter** persistence (survives app close) + ad-trigger logic
+- [ ] **Interstitial ad integration** via COPPA-safe network (SuperAwesome / AdMob for Families)
+- [ ] **Parental consent flow** on first ad view (required under COPPA)
+- [ ] **Rewarded-ad "watch for a bonus squishy" button** on home screen (opt-in, caps at rare)
+
+### VIP IAP (not yet built)
+
+- [ ] **Apple IAP wiring** via `expo-in-app-purchases` for the $6.99 VIP Pass
+- [ ] **Receipt validation** (device-side StoreKit 2 or server-side proxy)
+- [ ] **Weekly VIP drop mechanic** — Sunday gift-box on home screen; cadence tracking; separate pull odds (60% rare / 35% legendary / 5% BL)
+- [ ] **"Unlock Vault — $6.99" button wiring** (currently decorative on Trophy Room)
+- [ ] **Expansion pack infrastructure** (future $2.99 themed shelf drops)
+- [ ] **VIP entitlement persistence** across devices (currently local-only)
 
 ## 🎨 UX / Polish
 
