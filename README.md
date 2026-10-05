@@ -136,7 +136,13 @@ The game is **feature-complete for playtesting** but has distinct work-tracks be
 - [ ] **Puzzle counter** persistence (survives app close) + ad-trigger logic
 - [ ] **Interstitial ad integration** via COPPA-safe network (SuperAwesome / AdMob for Families)
 - [ ] **Parental consent flow** on first ad view (required under COPPA)
-- [ ] **Rewarded-ad "watch for a bonus squishy" button** on home screen (opt-in, caps at rare)
+
+**Rewarded ads — "🎁 Watch for a bonus squishy" (locked spec):**
+- [ ] Home-screen button, opt-in only, hidden for VIP users
+- [ ] **Pull odds:** 90% common / 10% rare / **0% legendary** (reward without devaluing the chase)
+- [ ] **Daily cap:** 3 views per day per profile
+- [ ] **30-minute cooldown** between views (prevents mash-the-button abuse)
+- [ ] **Custom Gift Box** PNG (generate via Gemini — distinct from match-win shelf boxes to signal free-perk nature)
 
 ### VIP IAP (not yet built)
 
