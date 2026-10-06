@@ -148,7 +148,7 @@ export const SQUISHIES: Squishy[] = [
   { id: 'dogs-04', name: 'Barkley', species: 'St. Bernard', birthday: 'January 7', favorite: { category: 'Favorite snack', value: 'cheese chunks' }, rarity: 'common', shelf: 'dogs', image: require('./assets/images/squishies/dogs/dogs-04-stbernard.png') },
   { id: 'dogs-05', name: 'Mars', species: 'Toy Poodle', birthday: 'August 20', favorite: { category: 'Favorite game', value: 'zoomies' }, rarity: 'common', shelf: 'dogs', image: require('./assets/images/squishies/dogs/dogs-05-poodle.png') },
   { id: 'dogs-06', name: 'Winnie', species: 'Golden Retriever', birthday: 'December 20', favorite: { category: 'Favorite game', value: 'fetch the stick' }, rarity: 'rare', shelf: 'dogs', image: require('./assets/images/squishies/dogs/dogs-06-golden.png') },
-  { id: 'dogs-07', name: 'Griffey', species: 'Border Collie', birthday: 'January 13', favorite: { category: 'Favorite activity', value: 'herding squirrels' }, rarity: 'rare', shelf: 'dogs', image: require('./assets/images/squishies/dogs/dogs-07-collie.png') },
+  { id: 'dogs-07', name: 'Griffey', species: 'Border Collie', birthday: 'January 13', favorite: { category: 'Favorite thing', value: 'the tennis ball… always the tennis ball' }, rarity: 'rare', shelf: 'dogs', image: require('./assets/images/squishies/dogs/dogs-07-collie.png') },
   { id: 'dogs-08', name: 'Duke', species: 'Boxer', birthday: 'January 20', favorite: { category: 'Favorite thing', value: 'being a very good boy' }, rarity: 'legendary', shelf: 'dogs', image: require('./assets/images/squishies/dogs/dogs-08-boxer-legendary.png') },
 
   // 🍎 Fruit

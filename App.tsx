@@ -69,6 +69,7 @@ import {
   type Profile,
 } from './profiles';
 import { watchAdForReward, showInterstitial, COINS_PER_AD } from './rewardedAdService';
+import { haptics } from './haptics';
 
 const FONT_REGULAR = 'Fredoka_400Regular';
 const FONT_SEMIBOLD = 'Fredoka_600SemiBold';
@@ -993,6 +994,9 @@ export default function App() {
       }
     }
 
+    if (nextScreen === 'matchWinner') haptics.matchWin();
+    else haptics.roundWin();
+
     setPendingReveal({ squishy, nextScreen });
     setScreen('blindBoxReveal');
   }
@@ -1001,6 +1005,7 @@ export default function App() {
     setSoloWon(didWin);
 
     if (didWin) {
+      haptics.roundWin();
       const newStreak = soloWinStreak + 1;
       setSoloWinStreak(newStreak);
 
@@ -1026,6 +1031,7 @@ export default function App() {
   function swapTurn() {
     setConsecutiveCorrect(0);
     setCurrentPlayer(currentPlayer === 'A' ? 'B' : 'A');
+    haptics.turnPass();
     setScreen('turnPass');
   }
 
@@ -1033,6 +1039,7 @@ export default function App() {
     type: 'wrong' | 'streak',
     letter?: string
   ) {
+    if (type === 'streak') haptics.streak();
     setTurnFeedback({ type, letter });
     setTimeout(() => {
       setTurnFeedback(null);
@@ -1058,6 +1065,7 @@ export default function App() {
     const isCorrect = opponentWord.includes(letter);
 
     if (isCorrect) {
+      haptics.correctGuess();
       const uniqueLetters = [
         ...new Set(opponentWord.replace(/[^A-Z]/g, '').split('')),
       ];
@@ -1079,10 +1087,12 @@ export default function App() {
 
       setConsecutiveCorrect(newConsecutive);
     } else {
+      haptics.wrongGuess();
       const wrongCount = newGuessed.filter(
         (l) => !opponentWord.includes(l)
       ).length;
       if (wrongCount >= MAX_WRONG + extraLivesThisRound) {
+        haptics.letterLockout();
         // Current player locked out. Check if other player can still play.
         const other: Player = currentPlayer === 'A' ? 'B' : 'A';
         const otherGuessed = other === 'A' ? guessedByA : guessedByB;
@@ -1121,6 +1131,7 @@ export default function App() {
     const isCorrect = soloWord.includes(letter);
 
     if (isCorrect) {
+      haptics.correctGuess();
       const uniqueLetters = [
         ...new Set(soloWord.replace(/[^A-Z]/g, '').split('')),
       ];
@@ -1130,8 +1141,10 @@ export default function App() {
         finishSoloRound(true);
       }
     } else {
+      haptics.wrongGuess();
       const wrongCount = newGuessed.filter((l) => !soloWord.includes(l)).length;
       if (wrongCount >= MAX_WRONG + extraLivesThisRound) {
+        haptics.letterLockout();
         finishSoloRound(false);
       }
     }
@@ -3737,6 +3750,11 @@ function WordEntryScreen({
   const normalized = input.trim().toUpperCase();
   const localValidation = validateWord(normalized);
 
+  // Haptic ping whenever zAIa pops up — gentle "look at me"
+  useEffect(() => {
+    if (zaiaPopupOpen) haptics.zaiaAttention();
+  }, [zaiaPopupOpen]);
+
   // When input changes, debounce an LLM check if local is uncertain.
   useEffect(() => {
     setLlmResult(null);
@@ -5510,10 +5528,14 @@ function BlindBoxReveal({
     auraOpacity.setValue(0.9);
     textOpacity.setValue(1);
     continueOpacity.setValue(1);
+    haptics.boxReveal();
     setStage('revealed');
   }
 
   useEffect(() => {
+    // Haptic — box has appeared on screen
+    haptics.boxAppear();
+
     // Continuously rotate the aura for lively feel
     Animated.loop(
       Animated.timing(auraRotate, {
@@ -5544,6 +5566,7 @@ function BlindBoxReveal({
       }),
     ]).start(() => {
       if (skipRef.current) return;
+      haptics.boxShake();
       setStage('shaking');
 
       const shakeOnce = (dir: number, intensity = 0.18, speed = 100) =>
@@ -5603,6 +5626,7 @@ function BlindBoxReveal({
             }),
           ]).start(() => {
             if (skipRef.current) return;
+            haptics.boxReveal();
             setStage('revealed');
 
             Animated.sequence([
