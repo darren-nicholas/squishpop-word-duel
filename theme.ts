@@ -2,7 +2,7 @@
 // Inspired by chunky-kawaii mobile games (Fakeit, Pop Mart apps, etc.)
 // Each gradient is top → bottom. All colors chosen for high playfulness.
 
-export const SCREEN_GRADIENTS: Record<string, string[]> = {
+export const SCREEN_GRADIENTS: Record<string, [string, string, ...string[]]> = {
   // Start — warm amber/orange welcome
   start: ['#FFC168', '#FF9B48', '#FF7A2E'],
 

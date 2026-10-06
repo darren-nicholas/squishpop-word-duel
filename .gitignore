@@ -60,3 +60,7 @@ assets/images/squishies-fullres/
 assets/images/squishies-archive/
 assets/images/boxes-archive/
 assets/images/room/cabinet-frame-original.png
+
+# Python test and content-tool bytecode
+__pycache__/
+*.pyc

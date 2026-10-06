@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   Easing,
   Image,
@@ -22,28 +23,25 @@ import {
   Fredoka_600SemiBold,
   Fredoka_700Bold,
 } from '@expo-google-fonts/fredoka';
-import englishWords from 'an-array-of-english-words';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import { aiValidate, AiValidation } from './aiValidate';
+import { validateWord, normalizeWord } from './wordValidation';
 import {
   SQUISHIES,
   SHELVES,
   BOX_IMAGES,
   boxForSquishy,
   isBeyondLegendary,
+  rarityDisplayName,
   type Squishy,
   type Rarity,
   type Shelf,
 } from './squishies';
 import { SCREEN_GRADIENTS, BUBBLE_COLORS } from './theme';
 import {
-  AVATARS,
   AVATAR_SECTIONS,
   getAvatar,
   getAvatarPalette,
-  type Avatar,
 } from './avatars';
 import {
   loadProfiles,
@@ -68,8 +66,9 @@ import {
   INTERSTITIAL_MIN_ROUND_MS,
   type Profile,
 } from './profiles';
-import { watchAdForReward, showInterstitial, COINS_PER_AD } from './rewardedAdService';
+import { ADS_AVAILABLE, watchAdForReward, showInterstitial, COINS_PER_AD } from './rewardedAdService';
 import { haptics } from './haptics';
+import { canTakeTurn, isWordSolved, lettersForHint, HINT_COSTS, type HintType } from './gameplay';
 
 const FONT_REGULAR = 'Fredoka_400Regular';
 const FONT_SEMIBOLD = 'Fredoka_600SemiBold';
@@ -93,7 +92,6 @@ const ROUNDS_TO_WIN_MATCH = 5;
 const SOLO_WINS_PER_SQUISHY = 3;
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
-const DICTIONARY = new Set(englishWords);
 
 // Squishy types + SQUISHIES array + BOX_IMAGES now imported from ./squishies
 
@@ -159,13 +157,14 @@ function bonusSquishy(isVip: boolean = false): Squishy {
 function rarityBadge(rarity: Rarity): string {
   if (rarity === 'legendary') return '🏆 LEGENDARY';
   if (rarity === 'rare') return '🥈 RARE';
-  return 'COMMON';
+  return rarityDisplayName(rarity).toUpperCase();
 }
 
 function rarityColor(rarity: Rarity): string {
-  if (rarity === 'legendary') return '#B8863D';
-  if (rarity === 'rare') return '#8A4A9C';
-  return '#B5B5B5';
+  return {
+    common: '#B5B5B5', rare: '#8A4A9C', legendary: '#B8863D',
+    chrome: '#747C88', crystal: '#277F92', shadow: '#7254A0', mythic: '#B8860B',
+  }[rarity];
 }
 
 type Category = {
@@ -390,162 +389,6 @@ function randomWordFromCategory(
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function wordIsInDictionary(word: string): boolean {
-  const lower = word.toLowerCase();
-  if (DICTIONARY.has(lower)) return true;
-
-  if (lower.includes("'") && DICTIONARY.has(lower.replace(/'/g, ''))) {
-    return true;
-  }
-
-  if (lower.includes('-')) {
-    if (DICTIONARY.has(lower.replace(/-/g, ''))) return true;
-    const parts = lower.split('-').filter((p) => p.length > 0);
-    if (parts.length > 0 && parts.every((p) => DICTIONARY.has(p))) return true;
-  }
-
-  return false;
-}
-
-function allWordsInDictionary(phrase: string): boolean {
-  const words = phrase.split(/\s+/).filter((w) => w.length > 0);
-  return words.every((w) => wordIsInDictionary(w));
-}
-
-const PROFANITY_BLOCKLIST = new Set([
-  'FUCK', 'FUCKER', 'FUCKED', 'FUCKING',
-  'SHIT', 'SHITTY', 'SHITTED',
-  'BITCH', 'BITCHES', 'BITCHY',
-  'ASSHOLE', 'ASS', 'ASSES',
-  'DICK', 'DICKS', 'DICKED',
-  'PUSSY', 'PUSSIES',
-  'COCK', 'COCKS',
-  'BASTARD', 'BASTARDS',
-  'DAMN', 'DAMNED',
-  'PISS', 'PISSED', 'PISSING',
-  'WHORE', 'WHORES',
-  'SLUT', 'SLUTS', 'SLUTTY',
-  'FAG', 'FAGS', 'FAGGOT',
-  'CUNT', 'CUNTS',
-  'PRICK', 'PRICKS',
-  'WANKER',
-  'ANAL', 'ANUS',
-  'BOOB', 'BOOBS', 'BOOBIES',
-  'BREAST', 'BREASTS',
-  'NIPPLE', 'NIPPLES',
-  'PENIS', 'PENIES', 'PENI',
-  'VAGINA', 'VAG',
-  'TIT', 'TITS', 'TITTY',
-  'SCROTUM',
-  'JIZZ', 'CUM', 'CUMS',
-  'DILDO',
-  'HORNY',
-  'ERECTION',
-  'TURD', 'TURDS',
-  'HELL', 'HELLS',
-]);
-
-function containsProfanity(phrase: string): boolean {
-  const words = phrase.toUpperCase().split(/[\s'\-]+/);
-  return words.some((w) => PROFANITY_BLOCKLIST.has(w));
-}
-
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-
-  const prev = new Array(b.length + 1);
-  const curr = new Array(b.length + 1);
-  for (let j = 0; j <= b.length; j++) prev[j] = j;
-
-  for (let i = 1; i <= a.length; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(
-        curr[j - 1] + 1,
-        prev[j] + 1,
-        prev[j - 1] + cost
-      );
-    }
-    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
-  }
-
-  return prev[b.length];
-}
-
-const PROFANITY_LOWER = new Set(
-  Array.from(PROFANITY_BLOCKLIST).map((w) => w.toLowerCase())
-);
-
-const DICTIONARY_BY_FIRST_LETTER: Record<string, string[]> = {};
-for (const w of englishWords) {
-  if (w.length < 3 || w.length > 12) continue;
-  if (!/^[a-z]+$/.test(w)) continue;
-  if (PROFANITY_LOWER.has(w)) continue;
-  const first = w[0];
-  if (!DICTIONARY_BY_FIRST_LETTER[first]) {
-    DICTIONARY_BY_FIRST_LETTER[first] = [];
-  }
-  DICTIONARY_BY_FIRST_LETTER[first].push(w);
-}
-
-function findBestMatches(input: string, limit: number = 3): string[] {
-  const lower = input.toLowerCase();
-  if (lower.length < 4 || lower.length > 15) return [];
-
-  const first = lower[0];
-  const candidates = DICTIONARY_BY_FIRST_LETTER[first];
-  if (!candidates) return [];
-
-  const maxDistance = lower.length <= 6 ? 1 : 2;
-  const matches: { word: string; distance: number }[] = [];
-
-  for (const candidate of candidates) {
-    if (Math.abs(candidate.length - lower.length) > maxDistance) continue;
-    const d = levenshtein(lower, candidate);
-    if (d > 0 && d <= maxDistance) {
-      matches.push({ word: candidate, distance: d });
-    }
-  }
-
-  matches.sort((a, b) => {
-    if (a.distance !== b.distance) return a.distance - b.distance;
-    if (a.word.length !== b.word.length) return b.word.length - a.word.length;
-    return a.word.localeCompare(b.word);
-  });
-
-  return matches.slice(0, limit).map((m) => m.word.toUpperCase());
-}
-
-function suggestForPhrase(phrase: string): string[] {
-  const words = phrase.split(/\s+/).filter((w) => w.length > 0);
-  if (words.length === 0) return [];
-
-  if (words.length === 1) {
-    return findBestMatches(words[0], 3);
-  }
-
-  const replacements: string[] = [];
-  let anyChange = false;
-  for (const w of words) {
-    if (wordIsInDictionary(w)) {
-      replacements.push(w);
-    } else {
-      const matches = findBestMatches(w, 1);
-      if (matches.length > 0 && matches[0] !== w) {
-        replacements.push(matches[0]);
-        anyChange = true;
-      } else {
-        replacements.push(w);
-      }
-    }
-  }
-
-  return anyChange ? [replacements.join(' ')] : [];
-}
-
 type Screen =
   | 'loading'
   | 'whosPlaying'
@@ -568,7 +411,7 @@ type Player = 'A' | 'B';
 type Mode = '2player' | 'solo';
 
 export default function App() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Fredoka_400Regular,
     Fredoka_600SemiBold,
     Fredoka_700Bold,
@@ -583,12 +426,15 @@ export default function App() {
   const [profileAId, setProfileAId] = useState<string | null>(null);
   const [profileBId, setProfileBId] = useState<string | null>(null);
   const [profilesHydrated, setProfilesHydrated] = useState(false);
+  const [storageError, setStorageError] = useState(false);
+  const [hydrateAttempt, setHydrateAttempt] = useState(0);
   const [splashFadingOut, setSplashFadingOut] = useState(false);
 
   // Rewarded + interstitial ad state
   const [adWatching, setAdWatching] = useState<null | 'coins' | 'freePull' | 'interstitial'>(null);
   const [adRewardCoins, setAdRewardCoins] = useState<number | null>(null);
-  const roundStartedAtRef = useRef<number>(Date.now());
+  const roundStartedAtRef = useRef<number>(0);
+  const adBusy = useRef(false);
 
   const activeProfile =
     profiles.find((p) => p.id === activeProfileId) ?? null;
@@ -597,25 +443,11 @@ export default function App() {
 
   // Hydrate profiles on mount
   useEffect(() => {
+    let cancelled = false;
     const splashStart = Date.now();
     (async () => {
       let loaded = await loadProfiles();
       const activeId = await loadActiveProfileId();
-
-      // One-time collection wipe (bump the flag name to run again later)
-      const RESET_FLAG = 'squishpop.collectionResetV3';
-      const alreadyReset = await AsyncStorage.getItem(RESET_FLAG);
-      if (!alreadyReset && loaded.length > 0) {
-        loaded = loaded.map((p) => ({
-          ...p,
-          collection: [],
-          matchesWon: 0,
-          matchesPlayed: 0,
-          legendariesPulled: 0,
-        }));
-        await saveProfiles(loaded);
-        await AsyncStorage.setItem(RESET_FLAG, '1');
-      }
 
       // Schema migration: backfill coins for older profiles that pre-date the economy
       loaded = loaded.map((p) => ({
@@ -625,6 +457,7 @@ export default function App() {
         puzzlesPlayed: typeof p.puzzlesPlayed === 'number' ? p.puzzlesPlayed : 0,
       }));
 
+      if (cancelled) return;
       setProfiles(loaded);
       setActiveProfileId(activeId);
       setProfilesHydrated(true);
@@ -641,6 +474,7 @@ export default function App() {
       setSplashFadingOut(true);
       await new Promise((r) => setTimeout(r, FADE_OUT_MS));
 
+      if (cancelled) return;
       // Routing: no profiles → create one; otherwise go to home (not player picker)
       if (loaded.length === 0) {
         setScreen('addProfile');
@@ -652,13 +486,14 @@ export default function App() {
           setScreen('whosPlaying');
         }
       }
-    })();
-  }, []);
+    })().catch(() => { if (!cancelled) setStorageError(true); });
+    return () => { cancelled = true; };
+  }, [hydrateAttempt]);
 
   // Persist profiles whenever they change (after hydration)
   useEffect(() => {
     if (!profilesHydrated) return;
-    saveProfiles(profiles).catch((e) => console.warn('saveProfiles', e));
+    saveProfiles(profiles).catch(() => Alert.alert('Progress not saved', 'Device storage is unavailable. Please free up space before continuing.'));
   }, [profiles, profilesHydrated]);
 
   // Persist active profile ID
@@ -684,19 +519,16 @@ export default function App() {
     return newProfile;
   }
 
-  // Interstitial gate: increments the lifetime puzzle counter, then shows an
+  // Interstitial gate: uses the completed lifetime puzzle counter, then shows an
   // interstitial if we're past the grace period AND the round took long enough
   // to justify interrupting. VIP skips entirely. Always runs the callback.
   async function maybeShowInterstitialThen(cb: () => void) {
-    if (!activeProfile) return cb();
+    if (!ADS_AVAILABLE || !activeProfile) return cb();
     if (activeProfile.isVip) return cb();
 
+
     const roundDurationMs = Date.now() - roundStartedAtRef.current;
-    const newPuzzleCount = (activeProfile.puzzlesPlayed ?? 0) + 1;
-    updateProfile(activeProfile.id, (p) => ({
-      ...p,
-      puzzlesPlayed: (p.puzzlesPlayed ?? 0) + 1,
-    }));
+    const newPuzzleCount = activeProfile.puzzlesPlayed ?? 0;
 
     const beyondGrace = newPuzzleCount > INTERSTITIAL_GRACE_PUZZLES;
     const onCadence =
@@ -705,30 +537,34 @@ export default function App() {
     if (!beyondGrace || !onCadence || !longEnough) return cb();
 
     setAdWatching('interstitial');
-    await showInterstitial();
-    setAdWatching(null);
-    cb();
+    try { await showInterstitial(); }
+    catch { /* An unavailable ad must never prevent continuing the game. */ }
+    finally { setAdWatching(null); cb(); }
   }
 
   async function handleWatchAd(type: 'coins' | 'freePull') {
-    if (!activeProfile) return;
-    if (!canWatchAd(activeProfile, type)) return;
-    if (adWatching) return;
+    const owner = screen === 'playing' ? turnProfile : activeProfile;
+    if (!ADS_AVAILABLE || !owner || owner.isVip || adBusy.current || !canWatchAd(owner, type)) return;
+    adBusy.current = true;
     setAdWatching(type);
-    const result = await watchAdForReward(type);
-    setAdWatching(null);
-    if (!result.success) return;
-    if (type === 'coins') {
-      updateProfile(activeProfile.id, (p) => recordAdWatch(addCoins(p, COINS_PER_AD), 'coins'));
-      setAdRewardCoins(COINS_PER_AD);
-    } else {
-      const squishy = randomSquishy(activeProfile.isVip);
-      updateProfile(activeProfile.id, (p) =>
-        recordAdWatch(awardSquishiesToProfile(p, [squishy]), 'freePull')
-      );
-      setLastEarnedSquishy(squishy);
-      setPendingReveal({ squishy, nextScreen: 'trophyRoom', autoOpenCard: true });
-      setScreen('blindBoxReveal');
+    try {
+      const result = await watchAdForReward(type);
+      if (!result.success) return;
+      if (type === 'coins') {
+        updateProfile(owner.id, (p) => recordAdWatch(addCoins(p, COINS_PER_AD), 'coins'));
+        setAdRewardCoins(COINS_PER_AD);
+      } else {
+        const squishy = weightedRandomSquishy({ common: 90, rare: 10, legendary: 0 });
+        updateProfile(owner.id, (p) => recordAdWatch(awardSquishiesToProfile(p, [squishy]), 'freePull'));
+        setLastEarnedSquishy(squishy);
+        setPendingReveal({ squishy, nextScreen: 'trophyRoom', autoOpenCard: true });
+        setScreen('blindBoxReveal');
+      }
+    } catch {
+      Alert.alert('Reward unavailable', 'Please try again later. No reward was used.');
+    } finally {
+      adBusy.current = false;
+      setAdWatching(null);
     }
   }
 
@@ -775,13 +611,32 @@ export default function App() {
   const [soloWord, setSoloWord] = useState('');
   const [soloGuessed, setSoloGuessed] = useState<string[]>([]);
   const [soloWon, setSoloWon] = useState(false);
-  const [soloWinStreak, setSoloWinStreak] = useState(0);
-  const [soloShelf, setSoloShelf] = useState<Squishy[]>([]);
+  const soloWinStreak = activeProfile?.soloWins ?? 0;
+  const soloShelf = activeProfile?.collection ?? [];
   // Track recent solo words per category to prevent repeats
   const [recentSoloWords, setRecentSoloWords] = useState<string[]>([]);
   // Coin economy
-  const [hintsUsedThisRound, setHintsUsedThisRound] = useState(0);
-  const [extraLivesThisRound, setExtraLivesThisRound] = useState(0);
+  const [hintsByPlayer, setHintsByPlayer] = useState({ A: 0, B: 0, solo: 0 });
+  const [livesByPlayer, setLivesByPlayer] = useState({ A: 0, B: 0, solo: 0 });
+  const turnKey = mode === 'solo' ? 'solo' : currentPlayer;
+  const hintsUsedThisRound = hintsByPlayer[turnKey];
+  const extraLivesThisRound = livesByPlayer[turnKey];
+  const turnProfile = mode === 'solo' ? activeProfile : currentPlayer === 'A' ? profileA : profileB;
+  const roundFinished = useRef(false);
+  const inputBusy = useRef(false);
+  const turnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (turnTimer.current) clearTimeout(turnTimer.current); }, []);
+  useEffect(() => { inputBusy.current = !!turnFeedback; }, [soloGuessed, guessedByA, guessedByB, hintsByPlayer, screen, turnFeedback]);
+
+  function resetRoundHints() {
+    setHintsByPlayer({ A: 0, B: 0, solo: 0 });
+    setLivesByPlayer({ A: 0, B: 0, solo: 0 });
+    roundFinished.current = false;
+    inputBusy.current = false;
+    setSolveModalOpen(false);
+    setTurnFeedback(null);
+    if (turnTimer.current) clearTimeout(turnTimer.current);
+  }
 
   function startNewMatch() {
     setMode('2player');
@@ -799,22 +654,26 @@ export default function App() {
     setRoundsWonA(0);
     setRoundsWonB(0);
     setLastEarnedSquishy(null);
-    setHintsUsedThisRound(0);
-    setExtraLivesThisRound(0);
+    resetRoundHints();
     // Player A = active profile; Player B picked at nameEntry
     setProfileAId(activeProfileId);
+    setShelfA(activeProfile?.collection ?? []);
+    setShelfB([]);
     setProfileBId(null);
     setPlayerAName(activeProfile?.name ?? 'Player A');
     setPlayerBName('Player B');
     setFirstPlayerThisRound('A');
+    // eslint-disable-next-line react-hooks/purity -- Read only inside a user event handler.
     roundStartedAtRef.current = Date.now();
     setScreen('nameEntry');
   }
 
   // DEV ONLY — force a pull of a specific rarity to preview the reveal
   function devPullByRarity(rarity: Rarity) {
+    if (!__DEV__) return;
     const pool = SQUISHIES.filter((s) => s.rarity === rarity);
     if (pool.length === 0) return;
+    // eslint-disable-next-line react-hooks/purity -- Read only inside a user event handler.
     const squishy = pool[Math.floor(Math.random() * pool.length)];
     setLastEarnedSquishy(squishy);
     setPendingReveal({ squishy, nextScreen: 'start' });
@@ -840,23 +699,23 @@ export default function App() {
     setSoloGuessed([]);
     setSoloWon(false);
     setLastEarnedSquishy(null);
-    setHintsUsedThisRound(0);
-    setExtraLivesThisRound(0);
+    resetRoundHints();
+    // eslint-disable-next-line react-hooks/purity -- Read only inside a user event handler.
     roundStartedAtRef.current = Date.now();
     setScreen('playing');
   }
 
   function startNextSoloRound() {
     if (!soloCategory) return;
-    setHintsUsedThisRound(0);
-    setExtraLivesThisRound(0);
-    // Remember up to 5 recent words — avoid repeating any of them
+    resetRoundHints();
+    // Remember up to 25 recent words — avoid repeating any of them
     const word = randomWordFromCategory(soloCategory, recentSoloWords);
     setSoloWord(word);
     setRecentSoloWords((prev) => [word, ...prev].slice(0, 25));
     setSoloGuessed([]);
     setSoloWon(false);
     setLastEarnedSquishy(null);
+    // eslint-disable-next-line react-hooks/purity -- Read only inside a user event handler.
     roundStartedAtRef.current = Date.now();
     setScreen('playing');
   }
@@ -873,61 +732,58 @@ export default function App() {
     setWinner(null);
     setWinReason('');
     setLastEarnedSquishy(null);
-    setHintsUsedThisRound(0);
-    setExtraLivesThisRound(0);
+    resetRoundHints();
+    // eslint-disable-next-line react-hooks/purity -- Read only inside a user event handler.
     roundStartedAtRef.current = Date.now();
     setScreen('playerAEntry');
   }
 
   // Hint handler — spend coins, apply the effect
-  function buyHint(type: HintType, cost: number) {
-    if (!activeProfile || activeProfile.coins < cost) return;
+  function buyHint(type: HintType, _cost: number) {
+    const cost = HINT_COSTS[type];
+    if (screen !== 'playing' || inputBusy.current || roundFinished.current || !turnProfile || turnProfile.coins < cost) return;
     if (hintsUsedThisRound >= MAX_HINTS_PER_ROUND) return;
-
-    updateProfile(activeProfile.id, (p) => spendCoins(p, cost));
-    setHintsUsedThisRound((n) => n + 1);
-
     const word = mode === 'solo' ? soloWord : (currentPlayer === 'A' ? wordB : wordA);
     const guessedList = mode === 'solo' ? soloGuessed : (currentPlayer === 'A' ? guessedByA : guessedByB);
-    const setGuessed = (next: string[]) => {
-      if (mode === 'solo') setSoloGuessed(next);
-      else if (currentPlayer === 'A') setGuessedByA(next);
-      else setGuessedByB(next);
-    };
-
-    if (type === 'firstLetter') {
-      const first = word.replace(/[^A-Z]/g, '')[0];
-      if (first && !guessedList.includes(first)) {
-        setGuessed([...guessedList, first]);
-      }
-    } else if (type === 'letter') {
-      const uniqueLetters = Array.from(new Set(word.replace(/[^A-Z]/g, '').split('')));
-      const unguessed = uniqueLetters.filter((l) => !guessedList.includes(l));
-      if (unguessed.length > 0) {
-        const pick = unguessed[Math.floor(Math.random() * unguessed.length)];
-        setGuessed([...guessedList, pick]);
-      }
-    } else if (type === 'vowels') {
-      const vowels = ['A', 'E', 'I', 'O', 'U'];
-      const wordVowels = vowels.filter((v) => word.includes(v) && !guessedList.includes(v));
-      if (wordVowels.length > 0) {
-        setGuessed([...guessedList, ...wordVowels]);
-      }
-    } else if (type === 'extraLife') {
-      setExtraLivesThisRound((n) => n + 1);
+    const revealed = lettersForHint(type, word, guessedList);
+    if (!revealed.length && type !== 'extraLife' && type !== 'skip') return;
+    inputBusy.current = true;
+    updateProfile(turnProfile.id, (p) => spendCoins(p, cost));
+    setHintsByPlayer((prev) => ({ ...prev, [turnKey]: prev[turnKey] + 1 }));
+    if (type === 'extraLife') {
+      setLivesByPlayer((prev) => ({ ...prev, [turnKey]: prev[turnKey] + 1 }));
     } else if (type === 'skip') {
-      if (mode === 'solo') {
-        finishSoloRound(false);
-      } else {
+      if (mode === 'solo') finishSoloRound(false);
+      else {
+        roundFinished.current = true;
+        recordCompletedPuzzle();
         setWinner(null);
         setWinReason(`${nameOf(currentPlayer)} skipped this round.`);
         setScreen('roundEnd');
       }
+    } else {
+      const next = [...guessedList, ...revealed];
+      if (mode === 'solo') setSoloGuessed(next);
+      else if (currentPlayer === 'A') setGuessedByA(next);
+      else setGuessedByB(next);
+      if (isWordSolved(word, next)) {
+        if (mode === 'solo') finishSoloRound(true);
+        else finishRound(currentPlayer, `${nameOf(currentPlayer)} solved it with a hint!`);
+      }
     }
   }
 
+  function recordCompletedPuzzle() {
+    const ids = mode === 'solo' ? [activeProfileId] : [profileAId, profileBId];
+    setProfiles((prev) => prev.map((p) => ids.includes(p.id) ? { ...p, puzzlesPlayed: (p.puzzlesPlayed ?? 0) + 1 } : p));
+  }
+
   function finishRound(winningPlayer: Player, reason: string) {
-    const squishy = randomSquishy(activeProfile?.isVip ?? false);
+    if (roundFinished.current) return;
+    roundFinished.current = true;
+    recordCompletedPuzzle();
+    const winningProfile = winningPlayer === 'A' ? profileA : profileB;
+    const squishy = randomSquishy(winningProfile?.isVip ?? false);
     setLastEarnedSquishy(squishy);
     setWinner(winningPlayer);
     setWinReason(reason);
@@ -940,7 +796,7 @@ export default function App() {
       const newMatchA = [...matchSquishiesA, squishy];
       const awarded: Squishy[] = [squishy];
       if (newRoundsA >= ROUNDS_TO_WIN_MATCH) {
-        const bonus = bonusSquishy(activeProfile?.isVip ?? false);
+        const bonus = bonusSquishy(winningProfile?.isVip ?? false);
         newShelfA.push(bonus);
         newMatchA.push(bonus);
         awarded.push(bonus);
@@ -969,7 +825,7 @@ export default function App() {
       const newMatchB = [...matchSquishiesB, squishy];
       const awarded: Squishy[] = [squishy];
       if (newRoundsB >= ROUNDS_TO_WIN_MATCH) {
-        const bonus = bonusSquishy(activeProfile?.isVip ?? false);
+        const bonus = bonusSquishy(winningProfile?.isVip ?? false);
         newShelfB.push(bonus);
         newMatchB.push(bonus);
         awarded.push(bonus);
@@ -1002,17 +858,19 @@ export default function App() {
   }
 
   function finishSoloRound(didWin: boolean) {
+    if (roundFinished.current) return;
+    roundFinished.current = true;
+    recordCompletedPuzzle();
     setSoloWon(didWin);
 
     if (didWin) {
       haptics.roundWin();
       const newStreak = soloWinStreak + 1;
-      setSoloWinStreak(newStreak);
+      if (activeProfileId) updateProfile(activeProfileId, (p) => ({ ...p, soloWins: (p.soloWins ?? 0) + 1 }));
 
       if (newStreak % SOLO_WINS_PER_SQUISHY === 0) {
         const squishy = randomSquishy(activeProfile?.isVip ?? false);
         setLastEarnedSquishy(squishy);
-        setSoloShelf([...soloShelf, squishy]);
         // Persist to active profile's collection
         if (activeProfileId) {
           updateProfile(activeProfileId, (p) =>
@@ -1030,7 +888,10 @@ export default function App() {
 
   function swapTurn() {
     setConsecutiveCorrect(0);
-    setCurrentPlayer(currentPlayer === 'A' ? 'B' : 'A');
+    const other = currentPlayer === 'A' ? 'B' : 'A';
+    const otherWord = other === 'A' ? wordB : wordA;
+    const otherGuessed = other === 'A' ? guessedByA : guessedByB;
+    setCurrentPlayer(canTakeTurn(otherWord, otherGuessed, livesByPlayer[other]) ? other : currentPlayer);
     haptics.turnPass();
     setScreen('turnPass');
   }
@@ -1040,14 +901,16 @@ export default function App() {
     letter?: string
   ) {
     if (type === 'streak') haptics.streak();
+    inputBusy.current = true;
     setTurnFeedback({ type, letter });
-    setTimeout(() => {
+    turnTimer.current = setTimeout(() => {
       setTurnFeedback(null);
       swapTurn();
     }, 1300);
   }
 
   function handleLetterPress(letter: string) {
+    if (screen !== 'playing' || roundFinished.current || inputBusy.current || !/^[A-Z]$/.test(letter)) return;
     if (mode === 'solo') {
       handleSoloLetterPress(letter);
       return;
@@ -1058,6 +921,7 @@ export default function App() {
 
     if (guessedList.includes(letter)) return;
 
+    inputBusy.current = true;
     const newGuessed = [...guessedList, letter];
     if (currentPlayer === 'A') setGuessedByA(newGuessed);
     else setGuessedByB(newGuessed);
@@ -1101,7 +965,7 @@ export default function App() {
           (l) => !otherOpponentWord.includes(l)
         ).length;
 
-        if (otherWrong >= MAX_WRONG + extraLivesThisRound) {
+        if (otherWrong >= MAX_WRONG + livesByPlayer[other]) {
           // Both locked out — tie
           finishRoundTie();
           return;
@@ -1115,6 +979,9 @@ export default function App() {
   }
 
   function finishRoundTie() {
+    if (roundFinished.current) return;
+    roundFinished.current = true;
+    recordCompletedPuzzle();
     setWinner(null);
     setWinReason(
       `Both players ran out of guesses. No squishy this round — try again!`
@@ -1125,6 +992,7 @@ export default function App() {
   function handleSoloLetterPress(letter: string) {
     if (soloGuessed.includes(letter)) return;
 
+    inputBusy.current = true;
     const newGuessed = [...soloGuessed, letter];
     setSoloGuessed(newGuessed);
 
@@ -1151,8 +1019,10 @@ export default function App() {
   }
 
   function handleSolveAttempt(attempt: string) {
+    if (screen !== 'playing' || roundFinished.current || inputBusy.current) return;
+    inputBusy.current = true;
     const normalize = (s: string) =>
-      s.trim().toUpperCase().replace(/\s+/g, ' ');
+      normalizeWord(s);
     setSolveModalOpen(false);
 
     if (mode === 'solo') {
@@ -1188,7 +1058,16 @@ export default function App() {
     (l) => !currentOpponentWord.includes(l)
   ).length;
 
-  if (!fontsLoaded || !profilesHydrated || screen === 'loading') {
+  if (storageError) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', padding: 24 }]}>
+        <Text style={{ textAlign: 'center', fontSize: 20, marginBottom: 20 }}>We couldn&apos;t load your profiles. Your saved data has been kept.</Text>
+        <ChunkyButton onPress={() => { setStorageError(false); setHydrateAttempt((n) => n + 1); }}>Try Again</ChunkyButton>
+      </View>
+    );
+  }
+
+  if ((!fontsLoaded && !fontError) || !profilesHydrated || screen === 'loading') {
     return (
       <View style={styles.container}>
         <StatusBar style="light" />
@@ -1234,6 +1113,7 @@ export default function App() {
             const newProfile = addProfile(name, avatarId);
             if (addProfileReturnTo === 'nameEntry') {
               setProfileBId(newProfile.id);
+              setShelfB(newProfile.collection);
               setPlayerBName(newProfile.name);
               setScreen('playerAEntry');
             } else {
@@ -1284,6 +1164,7 @@ export default function App() {
           otherProfiles={profiles.filter((p) => p.id !== activeProfileId)}
           onPickOpponent={(opponent) => {
             setProfileBId(opponent.id);
+            setShelfB(opponent.collection);
             setPlayerAName(activeProfile?.name ?? 'Player A');
             setPlayerBName(opponent.name);
             setScreen('playerAEntry');
@@ -1326,6 +1207,7 @@ export default function App() {
           roundsWonB={roundsWonB}
           onLockWord={(word) => {
             setWordB(word);
+            roundStartedAtRef.current = Date.now();
             setCurrentPlayer(firstPlayerThisRound);
             setConsecutiveCorrect(0);
             setScreen('playing');
@@ -1367,13 +1249,18 @@ export default function App() {
           roundsWonB={roundsWonB}
           soloCategory={soloCategory}
           onLetterPress={handleLetterPress}
-          onSolvePress={() => setSolveModalOpen(true)}
-          onQuit={() => setScreen('start')}
-          activeProfile={activeProfile}
+          onSolvePress={() => { if (!inputBusy.current && !roundFinished.current) setSolveModalOpen(true); }}
+          onQuit={() => Alert.alert('Leave this round?', 'This unfinished round will be lost. Your collection and earned coins are kept.', [
+            { text: 'Keep playing', style: 'cancel' },
+            { text: 'Leave round', onPress: () => { resetRoundHints(); setScreen('start'); } },
+          ])}
+          activeProfile={turnProfile}
+          inputDisabled={!!turnFeedback || adWatching !== null}
+          extraLives={extraLivesThisRound}
           hintsUsedThisRound={hintsUsedThisRound}
           onBuyHint={buyHint}
           onWatchAdForCoins={() => handleWatchAd('coins')}
-          coinAdsRemaining={activeProfile ? AD_DAILY_LIMIT - getAdWatchesToday(activeProfile).coins : 0}
+          coinAdsRemaining={turnProfile ? AD_DAILY_LIMIT - getAdWatchesToday(turnProfile).coins : 0}
         />
       )}
 
@@ -1437,14 +1324,14 @@ export default function App() {
         />
       )}
 
-      <SolvePuzzleModal
+      {solveModalOpen && screen === 'playing' && <SolvePuzzleModal
         visible={solveModalOpen}
         currentPlayerName={mode === 'solo' ? null : nameOf(currentPlayer)}
         secretWord={currentOpponentWord}
         guessed={currentGuessed}
         onSubmit={handleSolveAttempt}
         onCancel={() => setSolveModalOpen(false)}
-      />
+      />}
 
       <TurnFeedbackOverlay feedback={turnFeedback} />
 
@@ -1470,24 +1357,24 @@ export default function App() {
                 Setup
               </Text>
               <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
-                Each player picks a secret word OR phrase (up to 25 characters — "Taylor Swift" and "pepperoni pizza" both work). Pass the phone — only you see your own word.
+                Each player picks a secret word OR phrase (up to 25 characters — &quot;Taylor Swift&quot; and &quot;pepperoni pizza&quot; both work). Pass the phone — only you see your own word.
               </Text>
 
               <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
                 Meet zAIa
               </Text>
               <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
-                Your purple plush AI buddy checks if your word is real. If she doesn't know it, she'll ask: "Hmm, I don't know this one." You decide if it counts.
+                Your purple plush AI buddy checks if your word is real. If she doesn&apos;t know it, she&apos;ll ask: &quot;Hmm, I don&apos;t know this one.&quot; You decide if it counts.
               </Text>
 
               <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
                 Taking Turns
               </Text>
               <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
-                Guess letters in the opponent's word.{'\n'}
+                Guess letters in the opponent&apos;s word.{'\n'}
                 ✓ Correct letter → keep going (max 3 in a row){'\n'}
                 ✗ Wrong letter → turn passes to the other player{'\n'}
-                💀 6 wrong on your word? You can't guess anymore — opponent gets a chance to solve
+                💀 6 wrong on your word? You can&apos;t guess anymore — opponent gets a chance to solve
               </Text>
 
               <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
@@ -1525,7 +1412,7 @@ export default function App() {
                 🎵 Reveal All Vowels — 30{'\n'}
                 🆘 Extra Life — 40{'\n'}
                 🏃 Skip Round — 50{'\n\n'}
-                🎬 Low on coins? Watch a short ad for 💰 100. In the Trophy Room, you can also watch an ad to earn a free squishy pull. Both are capped at 3 per day.
+                Sell extra squishies in your Trophy Room to earn more coins. Your last copy stays in your collection.
               </Text>
 
               <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
@@ -1611,11 +1498,11 @@ function AdCoinRewardOverlay({
 }
 
 function LoadingScreen({ fadingOut = false }: { fadingOut?: boolean }) {
-  const logoOpacity = useRef(new Animated.Value(0)).current;
-  const logoScale = useRef(new Animated.Value(0.9)).current;
-  const titleOpacity = useRef(new Animated.Value(0)).current;
-  const dotScale = useRef(new Animated.Value(0.3)).current;
-  const screenOpacity = useRef(new Animated.Value(1)).current;
+  const [logoOpacity] = useState(() => new Animated.Value(0));
+  const [logoScale] = useState(() => new Animated.Value(0.9));
+  const [titleOpacity] = useState(() => new Animated.Value(0));
+  const [dotScale] = useState(() => new Animated.Value(0.3));
+  const [screenOpacity] = useState(() => new Animated.Value(1));
 
   useEffect(() => {
     if (fadingOut) {
@@ -1626,7 +1513,8 @@ function LoadingScreen({ fadingOut = false }: { fadingOut?: boolean }) {
         useNativeDriver: true,
       }).start();
     }
-  }, [fadingOut]);
+    return () => screenOpacity.stopAnimation();
+  }, [fadingOut, screenOpacity]);
 
   useEffect(() => {
     Animated.sequence([
@@ -1669,7 +1557,8 @@ function LoadingScreen({ fadingOut = false }: { fadingOut?: boolean }) {
         }),
       ])
     ).start();
-  }, []);
+    return () => [dotScale, logoOpacity, logoScale, titleOpacity].forEach((value) => value.stopAnimation());
+  }, [dotScale, logoOpacity, logoScale, titleOpacity]);
 
   return (
     <Animated.View style={{ flex: 1, backgroundColor: '#0F1420', opacity: screenOpacity }}>
@@ -1946,7 +1835,7 @@ function StartScreen({
                 textAlign: 'center',
               }}
             >
-              Your solo stats: {soloWinStreak} wins · {soloShelfCount} squishies
+              Your collection: {soloShelfCount} squishies · {soloWinStreak} solo wins
             </Text>
           </View>
         )}
@@ -1977,6 +1866,7 @@ function StartScreen({
         </View>
       </View>
 
+      {__DEV__ && (<>
       {/* DEV buttons — remove before shipping. */}
       <Pressable
         onPress={() => setDevPickerOpen(true)}
@@ -2019,6 +1909,8 @@ function StartScreen({
           BOXES
         </Text>
       </Pressable>
+
+      </>)}
 
       {/* Active profile chip — top-right corner */}
       {activeProfile && (
@@ -2098,7 +1990,7 @@ function StartScreen({
       </View>
 
       {/* DEV rarity picker modal */}
-      <Modal visible={devPickerOpen} transparent={true} animationType="fade" onRequestClose={() => setDevPickerOpen(false)}>
+      <Modal visible={__DEV__ && devPickerOpen} transparent={true} animationType="fade" onRequestClose={() => setDevPickerOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setDevPickerOpen(false)}>
           <Pressable
             onPress={() => {}}
@@ -2151,7 +2043,7 @@ function StartScreen({
       </Modal>
 
       {/* DEV box browser modal */}
-      <Modal visible={devBoxBrowserOpen} transparent={true} animationType="slide" onRequestClose={() => setDevBoxBrowserOpen(false)}>
+      <Modal visible={__DEV__ && devBoxBrowserOpen} transparent={true} animationType="slide" onRequestClose={() => setDevBoxBrowserOpen(false)}>
         <View style={{ flex: 1, backgroundColor: '#1a1613' }}>
           <SafeAreaView style={{ flex: 1 }}>
             <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#444' }}>
@@ -2394,7 +2286,7 @@ function WhosPlayingScreen({
     <ScreenBackground gradient={SCREEN_GRADIENTS.start}>
       <ScrollView contentContainerStyle={{ paddingTop: 60, paddingHorizontal: 20, paddingBottom: 60, alignItems: 'center' }}>
         <OutlinedText size={40} color="#FFFFFF" outlineColor="#8A3F00" outlineWidth={4}>
-          Who's playing?
+          Who&apos;s playing?
         </OutlinedText>
         <Text style={{ fontFamily: FONT_SEMIBOLD, fontSize: 14, color: '#8A3F00', marginTop: 8, marginBottom: 24 }}>
           Tap your character to begin
@@ -2432,7 +2324,7 @@ function WhosPlayingScreen({
                   {p.name}
                 </Text>
                 <Text style={{ fontFamily: FONT_SEMIBOLD, fontSize: 11, color: palette.accent, opacity: 0.75, marginTop: 2 }}>
-                  {uniqueSquishyIds(p).size} / 80  ·  💰 {p.coins}
+                  {uniqueSquishyIds(p).size} / {SQUISHIES.length}  ·  💰 {p.coins}
                 </Text>
               </Pressable>
             );
@@ -3004,7 +2896,7 @@ const WoodenShelf = React.memo(function WoodenShelf({
               borderColor: '#8A5F00',
             }}>
               <Text style={{ fontFamily: FONT_BOLD, fontSize: 9, color: '#2A1A00', letterSpacing: 1 }}>
-                ✨ UNLOCK VAULT · $6.99 ✨
+                ✨ VIP VAULT · COMING SOON ✨
               </Text>
             </View>
           )}
@@ -3043,26 +2935,13 @@ function TradingCardModal({
   onClose: () => void;
   onSell?: (squishy: Squishy) => void;
 }) {
-  const [confirmSellOpen, setConfirmSellOpen] = useState(false);
 
   const sellValue = squishy ? coinValueFor(squishy) : 0;
-  const sellsLastCopy = dupes === 1;
 
   if (!squishy) return null;
 
   function handleSellPress() {
-    if (!onSell) return;
-    if (!squishy) return;
-    if (sellsLastCopy) {
-      setConfirmSellOpen(true);
-    } else {
-      onSell(squishy);
-    }
-  }
-
-  function confirmSell() {
-    setConfirmSellOpen(false);
-    if (onSell && squishy) onSell(squishy);
+    if (onSell && squishy && dupes > 1) onSell(squishy);
   }
 
   const rarityBg =
@@ -3201,12 +3080,13 @@ function TradingCardModal({
             {onSell && (
               <ChunkyButton
                 onPress={handleSellPress}
+                disabled={dupes < 2}
                 color="#FFECA8"
                 textColor="#8A5F00"
                 shadowColor="#CC9000"
                 size="sm"
               >
-                💰 Sell · {sellValue}
+                {dupes > 1 ? `💰 Sell duplicate · ${sellValue}` : 'Last copy — keep it'}
               </ChunkyButton>
             )}
             <ChunkyButton
@@ -3222,40 +3102,7 @@ function TradingCardModal({
         </Pressable>
       </Pressable>
 
-      {/* Sell confirmation modal — fires when selling last copy */}
-      <Modal visible={confirmSellOpen} transparent={true} animationType="fade" onRequestClose={() => setConfirmSellOpen(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalContent, { alignItems: 'center', padding: 20 }]}>
-            <Text style={{ fontSize: 36, marginBottom: 8 }}>⚠️</Text>
-            <Text style={{ fontFamily: FONT_BOLD, fontSize: 18, color: '#1a1613', textAlign: 'center', marginBottom: 6 }}>
-              Last one!
-            </Text>
-            <Text style={{ fontFamily: FONT_SEMIBOLD, fontSize: 14, color: '#555', textAlign: 'center', marginBottom: 16, lineHeight: 20 }}>
-              This is your only {squishy.name}. If you sell it, you'll lose them from your collection. Are you sure?
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <ChunkyButton
-                onPress={() => setConfirmSellOpen(false)}
-                color={BUBBLE_COLORS.secondary}
-                textColor={BUBBLE_COLORS.secondaryText}
-                shadowColor={BUBBLE_COLORS.secondaryShadow}
-                size="sm"
-              >
-                Keep it
-              </ChunkyButton>
-              <ChunkyButton
-                onPress={confirmSell}
-                color={BUBBLE_COLORS.coral}
-                textColor={BUBBLE_COLORS.coralText}
-                shadowColor={BUBBLE_COLORS.coralShadow}
-                size="sm"
-              >
-                Sell for {sellValue}
-              </ChunkyButton>
-            </View>
-          </View>
-        </View>
-      </Modal>
+
     </Modal>
   );
 }
@@ -3298,7 +3145,7 @@ function TrophyRoomScreen({
       <SafeAreaView style={{ zIndex: 10 }}>
         <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 2, alignItems: 'center' }}>
           <OutlinedText size={22} color="#FFECC9" outlineColor="#2A1A00" outlineWidth={2}>
-            {profile.name}'s Trophy Room
+            {profile.name}&apos;s Trophy Room
           </OutlinedText>
           <View style={{
             marginTop: 2,
@@ -3310,10 +3157,11 @@ function TrophyRoomScreen({
             borderColor: '#8B5E3B',
           }}>
             <Text style={{ fontFamily: FONT_BOLD, fontSize: 12, color: '#2A1A00' }}>
-              {owned.size} / 80 collected  ·  💰 {profile.coins}
+              {owned.size} / {SQUISHIES.length} collected  ·  💰 {profile.coins}
             </Text>
           </View>
 
+          {ADS_AVAILABLE && !profile.isVip && (
           <Pressable
             onPress={freePullsRemaining > 0 ? onWatchAdForFreePull : undefined}
             disabled={freePullsRemaining <= 0}
@@ -3347,6 +3195,7 @@ function TrophyRoomScreen({
               </View>
             )}
           </Pressable>
+          )}
         </View>
       </SafeAreaView>
 
@@ -3531,7 +3380,7 @@ function ScreenBackground({
   gradient = SCREEN_GRADIENTS.start,
   children,
 }: {
-  gradient?: string[];
+  gradient?: [string, string, ...string[]];
   children: React.ReactNode;
 }) {
   return (
@@ -3589,6 +3438,8 @@ function ChunkyButton({
       <Pressable
         onPress={onPress}
         disabled={disabled}
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
         style={({ pressed }) => ({
           backgroundColor: disabled ? '#B5B5B5' : color,
           paddingHorizontal: s.padH,
@@ -3626,7 +3477,7 @@ function PlaceholderScreen({
   subtitle: string;
   buttonLabel: string;
   onPress: () => void;
-  gradient?: string[];
+  gradient?: [string, string, ...string[]];
 }) {
   return (
     <ScreenBackground gradient={gradient}>
@@ -3661,75 +3512,6 @@ function PlaceholderScreen({
   );
 }
 
-type Validation = {
-  valid: boolean;
-  warning: boolean;
-  message: string;
-  suggestions?: string[];
-};
-
-function validateWord(word: string): Validation {
-  if (word.length === 0) {
-    return {
-      valid: false,
-      warning: false,
-      message: 'Type a word or phrase to begin.',
-    };
-  }
-  if (word.length < 3) {
-    return {
-      valid: false,
-      warning: false,
-      message: 'Too short — needs at least 3 letters.',
-    };
-  }
-  if (word.length > 25) {
-    return {
-      valid: false,
-      warning: false,
-      message: 'Too long — max 25 characters.',
-    };
-  }
-  if (!/^[A-Z\s'\-]+$/.test(word)) {
-    return {
-      valid: false,
-      warning: false,
-      message: 'Only letters, spaces, apostrophes, and hyphens.',
-    };
-  }
-  if (!/[AEIOUY]/.test(word)) {
-    return {
-      valid: false,
-      warning: false,
-      message: 'Needs at least one vowel.',
-    };
-  }
-
-  if (containsProfanity(word)) {
-    return {
-      valid: false,
-      warning: false,
-      message: 'Please choose a different word.',
-    };
-  }
-
-  if (!allWordsInDictionary(word)) {
-    const suggestions = suggestForPhrase(word);
-    return {
-      valid: true,
-      warning: true,
-      message: "⚠ Can't verify this is a real word. Lock in if you're sure.",
-      suggestions: suggestions.length > 0 ? suggestions : undefined,
-    };
-  }
-
-  return {
-    valid: true,
-    warning: false,
-    message: '✓ Great word — ready to lock in.',
-  };
-}
-
 function WordEntryScreen({
   playerLabel,
   playerAvatarId,
@@ -3744,122 +3526,15 @@ function WordEntryScreen({
   onLockWord: (word: string) => void;
 }) {
   const [input, setInput] = useState('');
-  const [llmResult, setLlmResult] = useState<AiValidation | null>(null);
-  const [llmLoading, setLlmLoading] = useState(false);
-  const [zaiaPopupOpen, setZaiaPopupOpen] = useState(false);
-  const normalized = input.trim().toUpperCase();
-  const localValidation = validateWord(normalized);
+  const submitted = useRef(false);
+  const normalized = normalizeWord(input);
+  const effective = validateWord(normalized);
 
-  // Haptic ping whenever zAIa pops up — gentle "look at me"
-  useEffect(() => {
-    if (zaiaPopupOpen) haptics.zaiaAttention();
-  }, [zaiaPopupOpen]);
-
-  // When input changes, debounce an LLM check if local is uncertain.
-  useEffect(() => {
-    setLlmResult(null);
-    setLlmLoading(false);
-    setZaiaPopupOpen(false);
-    if (!localValidation.warning) return;
-    if (normalized.length < 3) return;
-
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      if (cancelled) return;
-      setLlmLoading(true);
-      const result = await aiValidate(normalized);
-      if (cancelled) return;
-      setLlmLoading(false);
-      setLlmResult(result);
-      if (result.source === 'llm') {
-        setZaiaPopupOpen(true);
-      }
-    }, 700);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalized]);
-
-  // Build "effective" validation combining local + LLM
-  const effective: {
-    valid: boolean;
-    warning: boolean;
-    message: string;
-    loading: boolean;
-    fromLlm: boolean;
-  } = llmLoading
-    ? {
-        valid: false,
-        warning: false,
-        message: '✨ zAIa is thinking...',
-        loading: true,
-        fromLlm: false,
-      }
-    : localValidation.warning && llmResult?.source === 'llm'
-    ? {
-        valid: llmResult.valid,
-        warning: !llmResult.valid,
-        message: llmResult.message,
-        loading: false,
-        fromLlm: true,
-      }
-    : {
-        valid: localValidation.valid,
-        warning: localValidation.warning,
-        message: localValidation.message,
-        loading: false,
-        fromLlm: false,
-      };
-
-  async function handleSubmit() {
-    if (effective.loading) return;
-
-    // If local validation is uncertain, force zAIa to check inline before locking.
-    if (localValidation.warning) {
-      if (llmResult) {
-        if (!llmResult.valid) {
-          setZaiaPopupOpen(true);
-          return;
-        }
-        // LLM already approved — fall through to lock
-      } else {
-        setLlmLoading(true);
-        const result = await aiValidate(normalized);
-        setLlmLoading(false);
-        setLlmResult(result);
-        if (!result.valid) {
-          setZaiaPopupOpen(true);
-          return;
-        }
-        // LLM says valid — fall through to lock
-      }
-    } else if (!localValidation.valid) {
-      return;
-    }
-
+  function handleSubmit() {
+    if (submitted.current || !effective.valid) return;
+    submitted.current = true;
     RNKeyboard.dismiss();
     onLockWord(normalized);
-  }
-
-  function handleUseSuggestion(suggestion: string) {
-    const upperSuggestion = suggestion.toUpperCase();
-    setInput(upperSuggestion);
-    setZaiaPopupOpen(false);
-    RNKeyboard.dismiss();
-    onLockWord(upperSuggestion);
-  }
-
-  function handleLockFromPopup() {
-    setZaiaPopupOpen(false);
-    RNKeyboard.dismiss();
-    onLockWord(normalized);
-  }
-
-  function handleTryAgainFromPopup() {
-    setZaiaPopupOpen(false);
   }
 
   return (
@@ -3900,14 +3575,12 @@ function WordEntryScreen({
         <Text
           style={[
             styles.entryValidation,
-            !effective.valid && !effective.loading && styles.entryValidBad,
+            !effective.valid && styles.entryValidBad,
             effective.valid && !effective.warning && styles.entryValidOk,
             effective.warning && styles.entryValidWarning,
-            effective.loading && { color: '#7a5fa0' },
           ]}
         >
           {effective.message}
-          {effective.fromLlm ? '  ✨' : ''}
         </Text>
 
         {/* Suggestions removed per kid-test 2026-10-02 — too intrusive during active play. Validation warning still shows below. */}
@@ -3923,15 +3596,15 @@ function WordEntryScreen({
         </Text>
 
         <Pressable
-          disabled={!effective.valid || effective.loading}
+          disabled={!effective.valid}
           style={[
             styles.primaryButton,
-            (!effective.valid || effective.loading) && styles.primaryButtonDisabled,
+            (!effective.valid) && styles.primaryButtonDisabled,
           ]}
           onPress={handleSubmit}
         >
           <Text style={styles.primaryButtonText}>
-            {effective.loading ? 'Checking...' : 'Lock Word →'}
+            Lock Word →
           </Text>
         </Pressable>
 
@@ -3946,127 +3619,10 @@ function WordEntryScreen({
       </ScrollView>
 
 
-      {/* zAIa pop-up — fires when LLM gives a verdict */}
-      <Modal
-        visible={zaiaPopupOpen && !!llmResult}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setZaiaPopupOpen(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalContent, { alignItems: 'center', paddingTop: 28 }]}>
-            <ZaiaAvatar
-              mood={llmResult?.valid ? 'happy' : 'uncertain'}
-              size={110}
-            />
-            <Text
-              style={{
-                fontSize: 11,
-                letterSpacing: 2.5,
-                color: '#7a5fa0',
-                textTransform: 'uppercase',
-                fontWeight: '700',
-                marginTop: 14,
-                marginBottom: 6,
-              }}
-            >
-              zAIa says
-            </Text>
-            <Text
-              style={{
-                fontSize: 18,
-                color: '#1a1613',
-                textAlign: 'center',
-                lineHeight: 24,
-                marginBottom: 20,
-                fontStyle: 'italic',
-                paddingHorizontal: 10,
-              }}
-            >
-              "{llmResult?.message}"
-            </Text>
-
-            {llmResult?.valid && (
-              <Pressable
-                style={[styles.primaryButton, { paddingHorizontal: 36 }]}
-                onPress={handleLockFromPopup}
-              >
-                <Text style={styles.primaryButtonText}>Lock it in →</Text>
-              </Pressable>
-            )}
-
-            {llmResult && !llmResult.valid && llmResult.suggestion && (
-              <>
-                <Pressable
-                  style={[
-                    styles.primaryButton,
-                    { paddingHorizontal: 24, marginBottom: 10 },
-                  ]}
-                  onPress={() => handleUseSuggestion(llmResult.suggestion!)}
-                >
-                  <Text style={styles.primaryButtonText}>
-                    Use "{llmResult.suggestion}"
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={styles.secondaryButton}
-                  onPress={handleTryAgainFromPopup}
-                >
-                  <Text style={styles.secondaryButtonText}>Let me try again</Text>
-                </Pressable>
-              </>
-            )}
-
-            {llmResult && !llmResult.valid && !llmResult.suggestion && (
-              <Pressable
-                style={[styles.primaryButton, { paddingHorizontal: 36 }]}
-                onPress={handleTryAgainFromPopup}
-              >
-                <Text style={styles.primaryButtonText}>Let me try again</Text>
-              </Pressable>
-            )}
-          </View>
-        </View>
-      </Modal>
     </KeyboardAvoidingView>
     </ScreenBackground>
   );
 }
-
-function ZaiaAvatar({
-  mood = 'listening',
-  size = 110,
-}: {
-  mood?: 'listening' | 'thinking' | 'uncertain' | 'happy';
-  size?: number;
-}) {
-  // Subtle mood tilt — ears/body slight rotation
-  const rotation =
-    mood === 'uncertain' ? '-6deg' : mood === 'happy' ? '4deg' : '0deg';
-
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Image
-        source={require('./assets/images/characters/zaia.png')}
-        style={{
-          width: size,
-          height: size,
-          resizeMode: 'contain',
-          transform: [{ rotate: rotation }],
-        }}
-      />
-    </View>
-  );
-}
-
-type HintType = 'letter' | 'firstLetter' | 'vowels' | 'extraLife' | 'skip';
 
 const HINT_OPTIONS: { type: HintType; label: string; emoji: string; cost: number; description: string }[] = [
   { type: 'letter',      label: 'Reveal a Letter',      emoji: '🔤', cost: 20, description: 'Reveals one random correct letter' },
@@ -4094,6 +3650,8 @@ function GameScreen({
   onQuit,
   activeProfile,
   hintsUsedThisRound,
+  inputDisabled,
+  extraLives,
   onBuyHint,
   onWatchAdForCoins,
   coinAdsRemaining,
@@ -4113,6 +3671,8 @@ function GameScreen({
   onQuit: () => void;
   activeProfile: Profile | null;
   hintsUsedThisRound: number;
+  inputDisabled: boolean;
+  extraLives: number;
   onBuyHint: (type: HintType, cost: number) => void;
   onWatchAdForCoins: () => void;
   coinAdsRemaining: number;
@@ -4142,10 +3702,10 @@ function GameScreen({
         <>
           <MatchScore roundsWonA={roundsWonA} roundsWonB={roundsWonB} compact />
           <Text style={styles.gameTurnLabel}>
-            {currentPlayerName}'s turn
+            {currentPlayerName}&apos;s turn
           </Text>
           <Text style={styles.gameSubtle}>
-            Guessing the opponent's word · streak {consecutiveCorrect}/
+            Guessing the opponent&apos;s word · streak {consecutiveCorrect}/
             {MAX_CONSECUTIVE}
           </Text>
         </>
@@ -4161,23 +3721,25 @@ function GameScreen({
         </>
       )}
 
-      <Gallows wrongCount={wrongCount} />
+      <Gallows wrongCount={Math.min(wrongCount, MAX_WRONG)} />
+      <Text style={styles.gameSubtle}>{Math.max(0, MAX_WRONG + extraLives - wrongCount)} wrong guesses remaining</Text>
       <WordDisplay word={secretWord} guessed={guessed} reveal={false} />
 
       <Keyboard
         guessed={guessed}
         secretWord={secretWord}
-        disabled={false}
+        disabled={inputDisabled}
         onPress={onLetterPress}
       />
 
-      <Pressable style={styles.solveButton} onPress={onSolvePress}>
+      <Pressable style={styles.solveButton} disabled={inputDisabled} onPress={onSolvePress}>
         <Text style={styles.solveButtonText}>🎯 Solve the Puzzle</Text>
       </Pressable>
 
       {/* Hints chip — bottom-right corner */}
       {activeProfile && (
         <Pressable
+          disabled={inputDisabled}
           onPress={() => setHintMenuOpen(true)}
           style={{
             position: 'absolute',
@@ -4229,7 +3791,7 @@ function GameScreen({
               </Text>
             </View>
 
-            {(activeProfile?.coins ?? 0) < 15 && coinAdsRemaining > 0 && (
+            {ADS_AVAILABLE && (activeProfile?.coins ?? 0) < 15 && coinAdsRemaining > 0 && (
               <Pressable
                 onPress={() => {
                   setHintMenuOpen(false);
@@ -4265,7 +3827,8 @@ function GameScreen({
             )}
 
             {HINT_OPTIONS.map((hint) => {
-              const canAfford = (activeProfile?.coins ?? 0) >= hint.cost;
+              const useful = hint.type === 'extraLife' || hint.type === 'skip' || lettersForHint(hint.type, secretWord, guessed).length > 0;
+              const canAfford = useful && (activeProfile?.coins ?? 0) >= hint.cost;
               const underLimit = hintsUsedThisRound < MAX_HINTS_PER_ROUND;
               const enabled = canAfford && underLimit;
               return (
@@ -4355,13 +3918,9 @@ function SolvePuzzleModal({
   const inputRefs = useRef<(TextInput | null)[]>([]);
 
   useEffect(() => {
-    if (visible) {
-      setBlankValues(blankIndices.map(() => ''));
-      setTimeout(() => {
-        inputRefs.current[0]?.focus();
-      }, 150);
-    }
-  }, [visible, secretWord]);
+    const timer = setTimeout(() => inputRefs.current[0]?.focus(), 150);
+    return () => clearTimeout(timer);
+  }, []);
 
   const allFilled = blankValues.every((v) => v.length > 0);
 
@@ -4404,7 +3963,7 @@ function SolvePuzzleModal({
     onSubmit(assembleWord());
   }
 
-  const words = positions.reduce<Array<typeof positions>>(
+  const words = positions.reduce<typeof positions[]>(
     (acc, p) => {
       if (p.char === ' ') {
         acc.push([]);
@@ -4431,7 +3990,7 @@ function SolvePuzzleModal({
         <View style={styles.modalContent}>
           <Text style={styles.modalTitle}>Solve the Puzzle</Text>
           <Text style={styles.modalWarning}>
-            ⚠️ {currentPlayerName ? `${currentPlayerName}, ` : ''}if you're
+            ⚠️ {currentPlayerName ? `${currentPlayerName}, ` : ''}if you&apos;re
             wrong you LOSE this round immediately.
           </Text>
 
@@ -4572,9 +4131,9 @@ function RoundEndScreen({
       </View>
 
       <View style={styles.wordsRevealBox}>
-        <Text style={styles.wordRevealLabel}>{nameA}'s word was:</Text>
+        <Text style={styles.wordRevealLabel}>{nameA}&apos;s word was:</Text>
         <Text style={styles.wordRevealValue}>{wordA}</Text>
-        <Text style={styles.wordRevealLabel}>{nameB}'s word was:</Text>
+        <Text style={styles.wordRevealLabel}>{nameB}&apos;s word was:</Text>
         <Text style={styles.wordRevealValue}>{wordB}</Text>
       </View>
 
@@ -4796,10 +4355,10 @@ function MatchWinnerScreen({
         </View>
       )}
 
-      <Text style={styles.shelfHeader}>{winnerName}'s Match Haul</Text>
+      <Text style={styles.shelfHeader}>{winnerName}&apos;s Match Haul</Text>
       <ShelfGrid squishies={winnerMatchSquishies} />
       <Text style={{ fontSize: 12, color: '#8a6a2e', fontWeight: '600', marginBottom: 10 }}>
-        🏆 {winnerLifetimeTotal} total in {winnerName}'s collection
+        🏆 {winnerLifetimeTotal} total in {winnerName}&apos;s collection
       </Text>
 
       {loserMatchSquishies.length > 0 && loserName && (
@@ -4820,7 +4379,7 @@ function MatchWinnerScreen({
             ))}
           </View>
           <Text style={{ fontSize: 10, color: '#8a6a2e', fontWeight: '600' }}>
-            🏆 {loserLifetimeTotal} total in {loserName}'s collection
+            🏆 {loserLifetimeTotal} total in {loserName}&apos;s collection
           </Text>
         </View>
       )}
@@ -4994,7 +4553,7 @@ const CONFETTI_COLORS = [
 type ConfettiWaveProps = { active: boolean; delayMs: number; count: number };
 
 function ConfettiWave({ active, delayMs, count }: ConfettiWaveProps) {
-  const particles = useRef(
+  const [particles] = useState(() =>
     Array.from({ length: count }, (_, i) => {
       const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
       const distance = 220 + Math.random() * 240;
@@ -5010,7 +4569,7 @@ function ConfettiWave({ active, delayMs, count }: ConfettiWaveProps) {
         opacity: new Animated.Value(0),
       };
     })
-  ).current;
+  );
 
   useEffect(() => {
     if (!active) return;
@@ -5041,7 +4600,8 @@ function ConfettiWave({ active, delayMs, count }: ConfettiWaveProps) {
         ]),
       ]).start();
     });
-  }, [active]);
+    return () => particles.forEach((p) => { p.trans.stopAnimation(); p.rot.stopAnimation(); p.opacity.stopAnimation(); });
+  }, [active, particles]);
 
   if (!active) return null;
 
@@ -5083,8 +4643,8 @@ function ConfettiWave({ active, delayMs, count }: ConfettiWaveProps) {
 
 // Mini-fanfare for RARE pulls — much lighter than legendary.
 function RareFanfare({ active }: { active: boolean }) {
-  const haloScale = useRef(new Animated.Value(0)).current;
-  const haloOpacity = useRef(new Animated.Value(0)).current;
+  const [haloScale] = useState(() => new Animated.Value(0));
+  const [haloOpacity] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (!active) return;
@@ -5104,7 +4664,8 @@ function RareFanfare({ active }: { active: boolean }) {
         useNativeDriver: true,
       }),
     ]).start();
-  }, [active]);
+    return () => [haloOpacity, haloScale].forEach((value) => value.stopAnimation());
+  }, [active, haloOpacity, haloScale]);
 
   if (!active) return null;
 
@@ -5140,11 +4701,11 @@ function VipFanfare({ active, edition }: {
   active: boolean;
   edition: 'chrome' | 'crystal' | 'shadow' | 'mythic';
 }) {
-  const rayRotate = useRef(new Animated.Value(0)).current;
-  const flashOpacity = useRef(new Animated.Value(0)).current;
-  const haloScale = useRef(new Animated.Value(0)).current;
-  const haloOpacity = useRef(new Animated.Value(0)).current;
-  const shakeX = useRef(new Animated.Value(0)).current;
+  const [rayRotate] = useState(() => new Animated.Value(0));
+  const [flashOpacity] = useState(() => new Animated.Value(0));
+  const [haloScale] = useState(() => new Animated.Value(0));
+  const [haloOpacity] = useState(() => new Animated.Value(0));
+  const [shakeX] = useState(() => new Animated.Value(0));
 
   const theme = {
     chrome:  { color: '#E0E0E0', flashColor: '#F5F5F5', halo: 'rgba(220, 220, 230, 0.55)' },
@@ -5158,7 +4719,7 @@ function VipFanfare({ active, edition }: {
 
     // Thunderous haptic pattern — more intense than legendary
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    [250, 500, 800, 1100, 1400].forEach((delay) =>
+    const hapticTimers = [250, 500, 800, 1100, 1400].map((delay) =>
       setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}), delay)
     );
 
@@ -5195,7 +4756,8 @@ function VipFanfare({ active, edition }: {
         duration: 400,
         useNativeDriver: true,
       }),
-    ]).start(() => {
+    ]).start(({ finished }) => {
+      if (!finished) return;
       Animated.loop(
         Animated.sequence([
           Animated.timing(haloScale, {
@@ -5223,7 +4785,11 @@ function VipFanfare({ active, edition }: {
         useNativeDriver: true,
       })
     ).start();
-  }, [active]);
+    return () => {
+      hapticTimers.forEach(clearTimeout);
+      [flashOpacity, haloOpacity, haloScale, rayRotate, shakeX].forEach((value) => value.stopAnimation());
+    };
+  }, [active, flashOpacity, haloOpacity, haloScale, rayRotate, shakeX]);
 
   if (!active) return null;
 
@@ -5318,20 +4884,20 @@ function VipFanfare({ active, edition }: {
 }
 
 function LegendaryFanfare({ active }: { active: boolean }) {
-  const rayRotate = useRef(new Animated.Value(0)).current;
-  const flashOpacity = useRef(new Animated.Value(0)).current;
-  const haloScale = useRef(new Animated.Value(0)).current;
-  const haloOpacity = useRef(new Animated.Value(0)).current;
+  const [rayRotate] = useState(() => new Animated.Value(0));
+  const [flashOpacity] = useState(() => new Animated.Value(0));
+  const [haloScale] = useState(() => new Animated.Value(0));
+  const [haloOpacity] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (!active) return;
 
     // Haptic punch: strong success + a second buzz for emphasis
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    setTimeout(() => {
+    const firstBuzz = setTimeout(() => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
     }, 400);
-    setTimeout(() => {
+    const secondBuzz = setTimeout(() => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
     }, 800);
 
@@ -5362,7 +4928,8 @@ function LegendaryFanfare({ active }: { active: boolean }) {
         duration: 400,
         useNativeDriver: true,
       }),
-    ]).start(() => {
+    ]).start(({ finished }) => {
+      if (!finished) return;
       // Keep halo pulsing continuously
       Animated.loop(
         Animated.sequence([
@@ -5391,7 +4958,11 @@ function LegendaryFanfare({ active }: { active: boolean }) {
         useNativeDriver: true,
       })
     ).start();
-  }, [active]);
+    return () => {
+      clearTimeout(firstBuzz); clearTimeout(secondBuzz);
+      [flashOpacity, haloOpacity, haloScale, rayRotate].forEach((value) => value.stopAnimation());
+    };
+  }, [active, flashOpacity, haloOpacity, haloScale, rayRotate]);
 
   if (!active) return null;
 
@@ -5504,16 +5075,16 @@ function BlindBoxReveal({
     return () => clearTimeout(t);
   }, [autoOpenCard, stage]);
 
-  const boxScale = useRef(new Animated.Value(0)).current;
-  const boxRotate = useRef(new Animated.Value(0)).current;
-  const boxOpacity = useRef(new Animated.Value(1)).current;
-  const squishyScale = useRef(new Animated.Value(0)).current;
-  const squishyTranslateY = useRef(new Animated.Value(60)).current;
-  const auraScale = useRef(new Animated.Value(0)).current;
-  const auraOpacity = useRef(new Animated.Value(0)).current;
-  const auraRotate = useRef(new Animated.Value(0)).current;
-  const textOpacity = useRef(new Animated.Value(0)).current;
-  const continueOpacity = useRef(new Animated.Value(0)).current;
+  const [boxScale] = useState(() => new Animated.Value(0));
+  const [boxRotate] = useState(() => new Animated.Value(0));
+  const [boxOpacity] = useState(() => new Animated.Value(1));
+  const [squishyScale] = useState(() => new Animated.Value(0));
+  const [squishyTranslateY] = useState(() => new Animated.Value(60));
+  const [auraScale] = useState(() => new Animated.Value(0));
+  const [auraOpacity] = useState(() => new Animated.Value(0));
+  const [auraRotate] = useState(() => new Animated.Value(0));
+  const [textOpacity] = useState(() => new Animated.Value(0));
+  const [continueOpacity] = useState(() => new Animated.Value(0));
 
   const skipRef = useRef(false);
 
@@ -5533,6 +5104,8 @@ function BlindBoxReveal({
   }
 
   useEffect(() => {
+    skipRef.current = false;
+    let revealTimer: ReturnType<typeof setTimeout> | undefined;
     // Haptic — box has appeared on screen
     haptics.boxAppear();
 
@@ -5564,7 +5137,8 @@ function BlindBoxReveal({
         duration: 800,
         useNativeDriver: true,
       }),
-    ]).start(() => {
+    ]).start(({ finished }) => {
+      if (!finished) return;
       if (skipRef.current) return;
       haptics.boxShake();
       setStage('shaking');
@@ -5600,11 +5174,12 @@ function BlindBoxReveal({
         Animated.delay(220),
         shakeOnce(1, 0.26, 85),
         Animated.delay(300),
-      ]).start(() => {
+      ]).start(({ finished }) => {
+        if (!finished) return;
         if (skipRef.current) return;
         setStage('opening');
 
-        setTimeout(() => {
+        revealTimer = setTimeout(() => {
           if (skipRef.current) return;
           Animated.parallel([
             Animated.timing(boxOpacity, {
@@ -5624,7 +5199,8 @@ function BlindBoxReveal({
               friction: 5,
               useNativeDriver: true,
             }),
-          ]).start(() => {
+          ]).start(({ finished }) => {
+            if (!finished) return;
             if (skipRef.current) return;
             haptics.boxReveal();
             setStage('revealed');
@@ -5645,7 +5221,12 @@ function BlindBoxReveal({
         }, 300);
       });
     });
-  }, []);
+    return () => {
+      skipRef.current = true;
+      if (revealTimer) clearTimeout(revealTimer);
+      [boxScale, boxRotate, boxOpacity, squishyScale, squishyTranslateY, auraScale, auraOpacity, auraRotate, textOpacity, continueOpacity].forEach((value) => value.stopAnimation());
+    };
+  }, [auraOpacity, auraRotate, auraScale, boxOpacity, boxRotate, boxScale, continueOpacity, squishyScale, squishyTranslateY, textOpacity]);
 
   const spin = boxRotate.interpolate({
     inputRange: [-1, 1],

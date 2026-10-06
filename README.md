@@ -21,7 +21,7 @@ Darren & Manny — MD Studios · 2026
 - **React Native + Expo 57** — iOS primary, Android capable
 - **TypeScript**
 - **AsyncStorage** for profile persistence
-- **Anthropic Claude Haiku** via `aiValidate.ts` — zAIa character validates kid-typed words (handles typos, suggests corrections)
+- **Local word validation** — dictionary, format, and profanity checks. Cloud AI checks are disabled until a secure backend and consent flow exist.
 - **expo-haptics** for reveal haptics
 - **expo-linear-gradient** throughout the UI
 - **Gemini 2.5 Flash Image** (`generate_images.py`) — all 120 squishies, 25 avatars, 10 themed boxes, cabinet frame, VIP box were AI-generated
@@ -36,9 +36,10 @@ Darren & Manny — MD Studios · 2026
 ├── profiles.ts                  # Profile type, coin economy, AsyncStorage helpers
 ├── avatars.ts                   # 25 character avatars + per-avatar team colors
 ├── theme.ts                     # Screen-themed gradients + button palette
-├── aiValidate.ts                # zAIa Anthropic validation
-├── apiKeys.ts                   # (gitignored) local Anthropic key
-├── apiKeys.example.ts           # template Manny copies into apiKeys.ts
+├── aiValidate.ts                # offline compatibility fallback (no network/key)
+├── wordValidation.ts            # local input validation and normalization
+├── gameplay.ts                  # tested hint and turn rules
+├── tests/                       # Node regression tests + Python tooling tests
 │
 ├── assets/
 │   ├── images/
@@ -64,17 +65,24 @@ Darren & Manny — MD Studios · 2026
 
 ```bash
 # Install JS deps
-npm install
+npm ci
 
-# Copy the API-key template and drop in a real Anthropic key
-cp apiKeys.example.ts apiKeys.ts
-# edit apiKeys.ts with your Anthropic Haiku key
+# Validate code and gameplay regressions (no API keys needed)
+npm run check
+python3 -m unittest discover -s tests -p 'test_*.py'
+
+# Verify production JS/assets for iOS and Android
+npm run build:check
 
 # Start Expo dev server
 npx expo start
 ```
 
-Open the Expo Go app on your phone and scan the QR code.
+Open an SDK-compatible Expo Go app on your phone and scan the QR code. The cloud machine can verify bundles but does not replace device testing. No Anthropic key or `apiKeys.ts` is needed. Never put provider credentials in a mobile bundle.
+
+CI runs typecheck, lint, gameplay/persistence/security tests, Python tooling tests, and production bundling on Node 24. Cloud terminals with restricted home-directory writes can use `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 XDG_CACHE_HOME=/tmp/squishpop-cache npm start -- --localhost`; an offline server requires no Expo authentication. This localhost server is for internal checks, not a phone connection.
+
+See [the review and release checklist](docs/game-review.md) for changes, limitations, and remaining launch requirements.
 
 ## Regenerating images
 
@@ -87,7 +95,10 @@ pip install rembg Pillow
 # Set Gemini API key
 echo 'GEMINI_API_KEY=your_key_here' > .env
 
-# Generate anything from a prompts file
+# Validate before spending API credits or changing assets
+python3 generate_images.py --prompts prompts_dogs.json --dry-run
+
+# Generate anything from a prompts file (also accepts an injected GEMINI_API_KEY)
 python3 generate_images.py --prompts prompts_dogs.json
 
 # Strip backgrounds + downsize
@@ -97,12 +108,12 @@ python3 strip_avatar_bg.py       # for avatars
 
 ## DEV buttons (currently in-app, remove before shipping)
 
-Two testing shortcuts live on the Start screen top-left:
+Two testing shortcuts appear on the Start screen top-left in development builds only:
 
 - 🏆 **PULL** — forces a reveal of any rarity (Common / Rare / Legendary / Chrome / Crystal / Shadow / Mythic). Great for QA on the reveal animations.
 - 📦 **BOXES** — scrollable gallery of every box (10 shelves + VIP + plain brown fallback).
 
-Strip these before App Store submission.
+Release builds hide both buttons and guard the pull handler. Ad simulation is also limited to development builds; no real ad provider is configured.
 
 ---
 
@@ -112,14 +123,14 @@ The game is **feature-complete for playtesting** but has distinct work-tracks be
 
 ## 🚀 Production readiness (required before any public launch)
 
-- [ ] **Backend proxy for Anthropic API key** — `aiValidate.ts` currently calls Claude Haiku directly from the device. Key is bundled into the IPA and extractable. Needs a tiny proxy (Firebase Functions / Cloudflare Worker / Vercel edge) that holds the key server-side.
+- [ ] **Secure cloud validation** — direct Anthropic calls and client-key imports have been removed. To restore AI checks, build a consent-gated backend with credentials, rate limits, response validation, and input-retention policy. Rotate any key previously shipped in an app bundle.
 - [ ] **App icon + splash screen** — currently Expo defaults.
 - [ ] **Privacy policy** (public URL) and **Privacy Manifest** (per Apple 2024+ requirement).
 - [ ] **Parental gate** before any IAP flow (COPPA / Kids-category requirement).
 - [ ] **Crash reporting** — Sentry or Bugsnag integration.
 - [ ] **Analytics** — Mixpanel / PostHog / Expo Analytics for retention + engagement.
-- [ ] **Remove DEV buttons** on Start screen (🏆 PULL + 📦 BOXES).
-- [ ] **Collection-reset flag** — currently hardcoded `squishpop.collectionResetV3`. Needs to be a build-time constant or server-driven for safe production rollouts.
+- [x] **Hide DEV buttons in release builds** on Start screen (🏆 PULL + 📦 BOXES).
+- [x] **Remove automatic collection wipe** — profile loading migrates existing data without erasing collections or stats. Invalid storage opens a recovery screen and is not overwritten.
 
 ## 💰 Monetization layer (currently decorative)
 
@@ -133,7 +144,7 @@ The game is **feature-complete for playtesting** but has distinct work-tracks be
 | 2 — **Free with ads** | Puzzle 11+ | Interstitial after each puzzle. Skip if gameplay < 60s (don't interrupt rapid guessing). Hard cap: 1 ad per 60 seconds total. |
 | 3 — **VIP removes ads** | $6.99 one-time purchase | No ads ever + Beyond-Legendary Vault + weekly drops. |
 
-- [ ] **Puzzle counter** persistence (survives app close) + ad-trigger logic
+- [x] **Puzzle counter** persistence on completed rounds, including VIP profiles. Real ad delivery and consent are still unimplemented.
 - [ ] **Interstitial ad integration** via COPPA-safe network (SuperAwesome / AdMob for Families)
 - [ ] **Parental consent flow** on first ad view (required under COPPA)
 
@@ -177,8 +188,8 @@ The game is **feature-complete for playtesting** but has distinct work-tracks be
 
 ## 🐛 Known tech debt
 
-- [ ] One pre-existing `LinearGradient` TypeScript strict warning (runtime fine, cosmetic).
-- [ ] `apiKeys.ts` approach is a stopgap — formal env-var pipeline needed before CI/CD.
+- [x] `LinearGradient` gradients use tuples; typecheck and Expo lint pass.
+- [x] Remove `apiKeys.ts` from the application dependency graph; tests and production bundles require no provider credentials.
 
 ---
 

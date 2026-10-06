@@ -64,7 +64,7 @@ export const AVATAR_SECTIONS: { title: string; data: Avatar[] }[] = [
 export type AvatarPalette = {
   bg: string;           // soft tile background
   accent: string;       // darker accent for borders / text
-  gradient: string[];   // 3-stop full-screen gradient
+  gradient: [string, string, ...string[]];   // 3-stop full-screen gradient
 };
 
 // 25 maximally distinct hues — spread around the color wheel so any two picks pop apart.

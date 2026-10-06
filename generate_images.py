@@ -28,14 +28,30 @@ URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generate
 
 
 def load_api_key():
+    injected = os.environ.get("GEMINI_API_KEY", "").strip()
+    if injected:
+        return injected
     if not ENV_PATH.exists():
         print("ERROR: .env file not found")
         sys.exit(1)
     for line in ENV_PATH.read_text().splitlines():
         if line.startswith("GEMINI_API_KEY="):
-            return line.split("=", 1)[1].strip()
+            key = line.split("=", 1)[1].strip().strip("\"'")
+            if key:
+                return key
     print("ERROR: GEMINI_API_KEY not found in .env")
     sys.exit(1)
+
+
+def resolve_output(folder, filename):
+    if not isinstance(folder, str) or not isinstance(filename, str):
+        raise ValueError("Prompt folder and filename must be strings")
+    target = (ROOT / folder / filename).resolve()
+    if not target.is_relative_to((ROOT / "assets" / "images").resolve()):
+        raise ValueError("Prompt output must stay under assets/images")
+    if target.suffix.lower() != ".png":
+        raise ValueError("Prompt output must be a PNG")
+    return target
 
 
 def log(msg):
@@ -69,15 +85,16 @@ def generate_image(api_key, prompt, output_path, max_retries=3):
             parts = candidates[0].get("content", {}).get("parts", [])
             for part in parts:
                 if "inlineData" in part:
-                    img_data = base64.b64decode(part["inlineData"]["data"])
+                    img_data = base64.b64decode(part["inlineData"]["data"], validate=True)
+                    if not img_data.startswith(b"\x89PNG\r\n\x1a\n"):
+                        raise ValueError("Provider returned a non-PNG image")
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     output_path.write_bytes(img_data)
                     return True
             raise ValueError("No image data in response parts")
 
         except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="ignore")
-            log(f"  HTTP {e.code}: {err_body[:300]}")
+            log(f"  HTTP {e.code}")
             if e.code == 429:
                 wait = 2 ** (attempt + 3)
                 log(f"  Rate limited, waiting {wait}s...")
@@ -99,9 +116,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", help="Filter by substring in filename or folder")
     parser.add_argument("--prompts", help="Prompts JSON file (default: prompts.json)", default=str(DEFAULT_PROMPTS))
+    parser.add_argument("--dry-run", action="store_true", help="Validate prompts without network calls or image changes")
     args = parser.parse_args()
-
-    api_key = load_api_key()
 
     prompts_path = Path(args.prompts)
     if not prompts_path.is_absolute():
@@ -120,6 +136,17 @@ def main():
     else:
         prompts = all_prompts
 
+    if not prompts:
+        print("ERROR: no prompts selected")
+        return 1
+    for item in prompts:
+        if not isinstance(item, dict) or not isinstance(item.get("prompt"), str) or not item["prompt"].strip():
+            raise ValueError("Each prompt must contain nonempty text")
+        resolve_output(item.get("folder", "assets/images"), item.get("filename", "item.png"))
+    if args.dry_run:
+        print(f"Validated {len(prompts)} prompts; no images changed")
+        return 0
+    api_key = load_api_key()
     total = len(prompts)
     log(f"=== Batch start: {total} prompts (filter={args.only or 'none'}) ===")
 
@@ -130,7 +157,7 @@ def main():
         folder = item.get("folder", "assets/images")
         prompt = item.get("prompt", "")
 
-        output_path = ROOT / folder / name
+        output_path = resolve_output(folder, name)
 
         if output_path.exists():
             log(f"[{i}/{total}] SKIP {name} (exists)")
@@ -153,7 +180,8 @@ def main():
         time.sleep(1)
 
     log(f"=== Done: {success} generated · {skipped} skipped · {failed} failed ===")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
