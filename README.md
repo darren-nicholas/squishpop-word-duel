@@ -21,7 +21,7 @@ Darren & Manny — MD Studios · 2026
 - **React Native + Expo 57** — iOS primary, Android capable
 - **TypeScript**
 - **AsyncStorage** for profile persistence
-- **Local word validation** — dictionary, format, and profanity checks. Cloud AI checks are disabled until a secure backend and consent flow exist.
+- **zAIa AI companion** — essential spelling help for younger players: warm encouragement, typo corrections, and suggestions via Anthropic Claude Haiku, alongside local format/dictionary checks. Preserve this experience during private playtesting; protect the API key behind a backend before public distribution.
 - **expo-haptics** for reveal haptics
 - **expo-linear-gradient** throughout the UI
 - **Gemini 2.5 Flash Image** (`generate_images.py`) — all 120 squishies, 25 avatars, 10 themed boxes, cabinet frame, VIP box were AI-generated
@@ -36,7 +36,8 @@ Darren & Manny — MD Studios · 2026
 ├── profiles.ts                  # Profile type, coin economy, AsyncStorage helpers
 ├── avatars.ts                   # 25 character avatars + per-avatar team colors
 ├── theme.ts                     # Screen-themed gradients + button palette
-├── aiValidate.ts                # offline compatibility fallback (no network/key)
+├── aiValidate.ts                # zAIa word checks, corrections, and offline fallback
+├── apiKeys.ts                   # ignored local playtest key (never commit)
 ├── wordValidation.ts            # local input validation and normalization
 ├── gameplay.ts                  # tested hint and turn rules
 ├── tests/                       # Node regression tests + Python tooling tests
@@ -67,6 +68,10 @@ Darren & Manny — MD Studios · 2026
 # Install JS deps
 npm ci
 
+# On a fresh checkout, create the ignored local key file. Keep an existing file.
+test -f apiKeys.ts || cp apiKeys.example.ts apiKeys.ts
+# Enter your Anthropic key locally in apiKeys.ts for live zAIa spelling help.
+
 # Validate code and gameplay regressions (no API keys needed)
 npm run check
 python3 -m unittest discover -s tests -p 'test_*.py'
@@ -78,7 +83,7 @@ npm run build:check
 npx expo start
 ```
 
-Open an SDK-compatible Expo Go app on your phone and scan the QR code. The cloud machine can verify bundles but does not replace device testing. No Anthropic key or `apiKeys.ts` is needed. Never put provider credentials in a mobile bundle.
+Open an SDK-compatible Expo Go app on your phone and scan the QR code. The cloud machine can verify bundles but does not replace device testing. Live zAIa requires your local `apiKeys.ts` key. Automated tests use mocked AI responses and need no real key. The direct key approach is accepted for private playtesting; move it to a backend before public distribution.
 
 CI runs typecheck, lint, gameplay/persistence/security tests, Python tooling tests, and production bundling on Node 24. Cloud terminals with restricted home-directory writes can use `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 XDG_CACHE_HOME=/tmp/squishpop-cache npm start -- --localhost`; an offline server requires no Expo authentication. This localhost server is for internal checks, not a phone connection.
 
@@ -123,7 +128,7 @@ The game is **feature-complete for playtesting** but has distinct work-tracks be
 
 ## 🚀 Production readiness (required before any public launch)
 
-- [ ] **Secure cloud validation** — direct Anthropic calls and client-key imports have been removed. To restore AI checks, build a consent-gated backend with credentials, rate limits, response validation, and input-retention policy. Rotate any key previously shipped in an app bundle.
+- [ ] **Secure cloud validation for public release** — retain zAIa’s essential spelling help while moving the provider key to a backend with rate limits, response validation, consent, and an input-retention policy. Direct calls remain available for private playtesting. Rotate any key previously shipped publicly.
 - [ ] **App icon + splash screen** — currently Expo defaults.
 - [ ] **Privacy policy** (public URL) and **Privacy Manifest** (per Apple 2024+ requirement).
 - [ ] **Parental gate** before any IAP flow (COPPA / Kids-category requirement).
@@ -189,7 +194,7 @@ The game is **feature-complete for playtesting** but has distinct work-tracks be
 ## 🐛 Known tech debt
 
 - [x] `LinearGradient` gradients use tuples; typecheck and Expo lint pass.
-- [x] Remove `apiKeys.ts` from the application dependency graph; tests and production bundles require no provider credentials.
+- [ ] Replace the local playtest key with a secure backend before public distribution, preserving zAIa’s correction and encouragement flow.
 
 ---
 

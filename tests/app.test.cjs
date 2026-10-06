@@ -28,6 +28,8 @@ mocks.set('expo-haptics', {
   ImpactFeedbackStyle: {}, NotificationFeedbackType: {},
   impactAsync: async () => {}, notificationAsync: async () => {}, selectionAsync: async () => {},
 });
+let validateAi = async () => ({ valid: true, message: 'Offline', source: 'fallback' });
+mocks.set('./aiValidate', { aiValidate: (word) => validateAi(word) });
 const App = require('../App.tsx').default;
 const { createProfile, decodeProfiles } = require('../profiles.ts');
 const { SQUISHIES, isBeyondLegendary } = require('../squishies.ts');
@@ -150,4 +152,36 @@ test('solo rewards resume saved progress and do not carry into another profile',
   const start = component(app, 'StartScreen');
   assert.equal(start.props.soloWinStreak, 0);
   assert.equal(start.props.soloShelfCount, 0);
+});
+test('zAIa offers a spelling correction that a child can use to lock their word', async (t) => {
+  validateAi = async () => ({ valid: false, message: 'I think you meant Minecraft!', suggestion: 'Minecraft', source: 'llm' });
+  t.after(() => { validateAi = async () => ({ valid: true, message: 'Offline', source: 'fallback' }); });
+  const a = createProfile('A', 'dad'), b = createProfile('B', 'mom');
+  const app = await boot(t, [a, b]);
+  await act(async () => component(app, 'StartScreen').props.onPlayWithFriend());
+  await act(async () => component(app, 'NameEntryScreen').props.onPickOpponent(b));
+  await act(async () => component(app, 'WordEntryScreen').findByType('TextInput').props.onChangeText('MINECRAFTT'));
+  await act(async () => { t.mock.timers.tick(700); });
+  const entry = component(app, 'WordEntryScreen');
+  assert.equal(entry.findByType('Modal').props.visible, true);
+  assert.ok(entry.findAllByType('Text').some((n) => n.children.join('').includes('I think you meant Minecraft!')));
+  const use = entry.findAllByType('Text').find((n) => n.children.join('').includes('Use "Minecraft"'));
+  await act(async () => use.parent.props.onPress());
+  assert.ok(component(app, 'PlaceholderScreen'));
+});
+test('a late zAIa response cannot approve or correct a different word', async (t) => {
+  let resolve;
+  validateAi = () => new Promise((r) => { resolve = r; });
+  t.after(() => { validateAi = async () => ({ valid: true, message: 'Offline', source: 'fallback' }); });
+  const a = createProfile('A', 'dad'), b = createProfile('B', 'mom');
+  const app = await boot(t, [a, b]);
+  await act(async () => component(app, 'StartScreen').props.onPlayWithFriend());
+  await act(async () => component(app, 'NameEntryScreen').props.onPickOpponent(b));
+  await act(async () => component(app, 'WordEntryScreen').findByType('TextInput').props.onChangeText('MINECRAFTT'));
+  await act(async () => { t.mock.timers.tick(700); });
+  await act(async () => component(app, 'WordEntryScreen').findByType('TextInput').props.onChangeText('CAT'));
+  await act(async () => resolve({ valid: true, message: 'Old approval', source: 'llm' }));
+  const entry = component(app, 'WordEntryScreen');
+  assert.equal(entry.findByType('Modal').props.visible, false);
+  assert.equal(entry.findByType('TextInput').props.value, 'CAT');
 });

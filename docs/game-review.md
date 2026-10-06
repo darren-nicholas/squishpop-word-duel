@@ -22,9 +22,11 @@ not establish App Store readiness or deploy a service.
 - Used the winner's VIP status for reward odds. Saved solo reward progress per
   profile, including across restarts; completed-round counters advance once
   even for VIP players and when the next action is going home.
-- Removed the client-key import and direct Anthropic requests. Word checks now
-  remain on the device, with explicit warnings for unknown words. This local
-  dictionary/blocklist is limited validation, not comprehensive moderation.
+- Restored zAIa's AI spelling help, warm explanations, corrections, and popup
+  actions for private playtesting. The ignored local `apiKeys.ts` approach is
+  retained by user decision; backend key protection remains a public-release
+  requirement. Late responses cannot act on an edited word, suggested words
+  must pass local checks, and repeated submit taps cannot lock twice.
 - Hid dev pull/box controls in release builds, disabled release ad simulation,
   and changed the unwired VIP purchase teaser to “coming soon.” Development
   free-pull odds are 90% common / 10% rare, with no legendary rewards.
@@ -52,7 +54,7 @@ when upgrading React.
 
 Production iOS and Android exports verify bundling, Hermes compilation, and
 asset resolution. They are not signed native builds or deployment. No automated
-checks make purchases, show real ads, send children’s words to a provider, or
+checks make purchases, show real ads, use real provider credentials in tests, or
 spend image-generation credits. All 225 prompt entries were checked locally.
 
 The cloud proxy rejected the official SDK 57 documentation URLs. This branch
@@ -64,7 +66,7 @@ Expo/EAS/native functionality.
 
 | Priority | Finding | Next step |
 | --- | --- | --- |
-| P0 | Historical app bundles may contain an Anthropic key | Rotate any previously shipped key. The new app no longer imports it; `apiKeys.ts` is unused and can be removed locally. |
+| P0 | The private-playtest app includes its local Anthropic key | Keep playtest builds private; preserve zAIa while moving the key to a backend before public distribution. Rotate any key previously shipped publicly. |
 | P1 | Production dependency audit still reports 16 high findings, propagated from `braces` and `node-forge` | Current registry releases (3.0.3 / 1.4.0) are within advisory ranges. Track GHSA-vfj7-8cjw-p6xm and GHSA-86w9-cpqp-85rv; update to compatible patched releases when available and rerun builds. Do not apply npm's suggested Expo/RN downgrades. These are largely build/toolchain paths; mobile exploitability has not been demonstrated. |
 | P1 | StoreKit purchases, receipt verification, entitlement recovery, and weekly VIP drops are absent | Select and test a supported SDK 57 purchase path, with parental gates, before offering paid VIP. Local `isVip` is not a verified commercial entitlement. |
 | P1 | Real ads, consent, cooldowns, and provider failure/cancel callbacks are absent | Keep release ads disabled until a children-appropriate provider and consent flow are integrated and device-tested. Implement the specified 30-minute free-pull cooldown then. |

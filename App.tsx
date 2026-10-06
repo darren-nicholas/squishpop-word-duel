@@ -25,6 +25,7 @@ import {
 } from '@expo-google-fonts/fredoka';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import { aiValidate, type AiValidation } from './aiValidate';
 import { validateWord, normalizeWord } from './wordValidation';
 import {
   SQUISHIES,
@@ -3526,15 +3527,147 @@ function WordEntryScreen({
   onLockWord: (word: string) => void;
 }) {
   const [input, setInput] = useState('');
+  const inputRevision = useRef(0);
   const submitted = useRef(false);
-  const normalized = normalizeWord(input);
-  const effective = validateWord(normalized);
+  const checking = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  function handleSubmit() {
-    if (submitted.current || !effective.valid) return;
+  function handleInputChange(value: string) {
+    inputRevision.current += 1;
+    checking.current = false;
+    setInput(value);
+    setLlmResult(null);
+    setLlmLoading(false);
+    setZaiaPopupOpen(false);
+  }
+  const [llmResult, setLlmResult] = useState<AiValidation | null>(null);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [zaiaPopupOpen, setZaiaPopupOpen] = useState(false);
+  const normalized = normalizeWord(input);
+  const localValidation = validateWord(normalized);
+
+  // Haptic ping whenever zAIa pops up — gentle "look at me"
+  useEffect(() => {
+    if (zaiaPopupOpen) haptics.zaiaAttention();
+  }, [zaiaPopupOpen]);
+
+  // When input changes, debounce an LLM check if local is uncertain.
+  useEffect(() => {
+    if (!localValidation.warning) return;
+    if (normalized.length < 3) return;
+
+    const revision = inputRevision.current;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (cancelled || checking.current || submitted.current) return;
+      checking.current = true;
+      setLlmLoading(true);
+      const result = await aiValidate(normalized);
+      if (cancelled || !mounted.current || revision !== inputRevision.current) return;
+      checking.current = false;
+      setLlmLoading(false);
+      setLlmResult(result);
+      if (result.source === 'llm') {
+        setZaiaPopupOpen(true);
+      }
+    }, 700);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [normalized]);
+
+  // Build "effective" validation combining local + LLM
+  const effective: {
+    valid: boolean;
+    warning: boolean;
+    message: string;
+    loading: boolean;
+    fromLlm: boolean;
+  } = llmLoading
+    ? {
+        valid: false,
+        warning: false,
+        message: '✨ zAIa is thinking...',
+        loading: true,
+        fromLlm: false,
+      }
+    : localValidation.warning && llmResult?.source === 'llm'
+    ? {
+        valid: llmResult.valid,
+        warning: !llmResult.valid,
+        message: llmResult.message,
+        loading: false,
+        fromLlm: true,
+      }
+    : {
+        valid: localValidation.valid,
+        warning: localValidation.warning,
+        message: localValidation.message,
+        loading: false,
+        fromLlm: false,
+      };
+
+  async function handleSubmit() {
+    if (effective.loading || checking.current || submitted.current || !localValidation.valid) return;
+    const revision = inputRevision.current;
+
+    // If local validation is uncertain, force zAIa to check inline before locking.
+    if (localValidation.warning) {
+      if (llmResult) {
+        if (!llmResult.valid) {
+          setZaiaPopupOpen(true);
+          return;
+        }
+        // LLM already approved — fall through to lock
+      } else {
+        checking.current = true;
+        setLlmLoading(true);
+        const result = await aiValidate(normalized);
+        if (!mounted.current || revision !== inputRevision.current) return;
+        checking.current = false;
+        setLlmLoading(false);
+        setLlmResult(result);
+        if (!result.valid) {
+          setZaiaPopupOpen(true);
+          return;
+        }
+        // LLM says valid — fall through to lock
+      }
+    } else if (!localValidation.valid) {
+      return;
+    }
+
+    if (submitted.current) return;
     submitted.current = true;
     RNKeyboard.dismiss();
     onLockWord(normalized);
+  }
+
+  function handleUseSuggestion(suggestion: string) {
+    const upperSuggestion = normalizeWord(suggestion);
+    if (submitted.current || !validateWord(upperSuggestion).valid) return;
+    submitted.current = true;
+    setInput(upperSuggestion);
+    setZaiaPopupOpen(false);
+    RNKeyboard.dismiss();
+    onLockWord(upperSuggestion);
+  }
+
+  function handleLockFromPopup() {
+    if (!localValidation.valid || llmResult?.valid !== true) return;
+    setZaiaPopupOpen(false);
+    if (submitted.current) return;
+    submitted.current = true;
+    RNKeyboard.dismiss();
+    onLockWord(normalized);
+  }
+
+  function handleTryAgainFromPopup() {
+    setZaiaPopupOpen(false);
   }
 
   return (
@@ -3559,7 +3692,7 @@ function WordEntryScreen({
 
         <TextInput
           value={input}
-          onChangeText={setInput}
+          onChangeText={handleInputChange}
           autoCapitalize="characters"
           autoCorrect={false}
           spellCheck={false}
@@ -3575,12 +3708,14 @@ function WordEntryScreen({
         <Text
           style={[
             styles.entryValidation,
-            !effective.valid && styles.entryValidBad,
+            !effective.valid && !effective.loading && styles.entryValidBad,
             effective.valid && !effective.warning && styles.entryValidOk,
             effective.warning && styles.entryValidWarning,
+            effective.loading && { color: '#7a5fa0' },
           ]}
         >
           {effective.message}
+          {effective.fromLlm ? '  ✨' : ''}
         </Text>
 
         {/* Suggestions removed per kid-test 2026-10-02 — too intrusive during active play. Validation warning still shows below. */}
@@ -3596,15 +3731,15 @@ function WordEntryScreen({
         </Text>
 
         <Pressable
-          disabled={!effective.valid}
+          disabled={!effective.valid || effective.loading}
           style={[
             styles.primaryButton,
-            (!effective.valid) && styles.primaryButtonDisabled,
+            (!effective.valid || effective.loading) && styles.primaryButtonDisabled,
           ]}
           onPress={handleSubmit}
         >
           <Text style={styles.primaryButtonText}>
-            Lock Word →
+            {effective.loading ? 'Checking...' : 'Lock Word →'}
           </Text>
         </Pressable>
 
@@ -3619,10 +3754,126 @@ function WordEntryScreen({
       </ScrollView>
 
 
+      {/* zAIa pop-up — fires when LLM gives a verdict */}
+      <Modal
+        visible={zaiaPopupOpen && !!llmResult}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setZaiaPopupOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContent, { alignItems: 'center', paddingTop: 28 }]}>
+            <ZaiaAvatar
+              mood={llmResult?.valid ? 'happy' : 'uncertain'}
+              size={110}
+            />
+            <Text
+              style={{
+                fontSize: 11,
+                letterSpacing: 2.5,
+                color: '#7a5fa0',
+                textTransform: 'uppercase',
+                fontWeight: '700',
+                marginTop: 14,
+                marginBottom: 6,
+              }}
+            >
+              zAIa says
+            </Text>
+            <Text
+              style={{
+                fontSize: 18,
+                color: '#1a1613',
+                textAlign: 'center',
+                lineHeight: 24,
+                marginBottom: 20,
+                fontStyle: 'italic',
+                paddingHorizontal: 10,
+              }}
+            >
+              &quot;{llmResult?.message}&quot;
+            </Text>
+
+            {llmResult?.valid && (
+              <Pressable
+                style={[styles.primaryButton, { paddingHorizontal: 36 }]}
+                onPress={handleLockFromPopup}
+              >
+                <Text style={styles.primaryButtonText}>Lock it in →</Text>
+              </Pressable>
+            )}
+
+            {llmResult && !llmResult.valid && llmResult.suggestion && (
+              <>
+                <Pressable
+                  style={[
+                    styles.primaryButton,
+                    { paddingHorizontal: 24, marginBottom: 10 },
+                  ]}
+                  onPress={() => handleUseSuggestion(llmResult.suggestion!)}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    Use &quot;{llmResult.suggestion}&quot;
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={handleTryAgainFromPopup}
+                >
+                  <Text style={styles.secondaryButtonText}>Let me try again</Text>
+                </Pressable>
+              </>
+            )}
+
+            {llmResult && !llmResult.valid && !llmResult.suggestion && (
+              <Pressable
+                style={[styles.primaryButton, { paddingHorizontal: 36 }]}
+                onPress={handleTryAgainFromPopup}
+              >
+                <Text style={styles.primaryButtonText}>Let me try again</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
     </ScreenBackground>
   );
 }
+
+function ZaiaAvatar({
+  mood = 'listening',
+  size = 110,
+}: {
+  mood?: 'listening' | 'thinking' | 'uncertain' | 'happy';
+  size?: number;
+}) {
+  // Subtle mood tilt — ears/body slight rotation
+  const rotation =
+    mood === 'uncertain' ? '-6deg' : mood === 'happy' ? '4deg' : '0deg';
+
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Image
+        source={require('./assets/images/characters/zaia.png')}
+        style={{
+          width: size,
+          height: size,
+          resizeMode: 'contain',
+          transform: [{ rotate: rotation }],
+        }}
+      />
+    </View>
+  );
+}
+
 
 const HINT_OPTIONS: { type: HintType; label: string; emoji: string; cost: number; description: string }[] = [
   { type: 'letter',      label: 'Reveal a Letter',      emoji: '🔤', cost: 20, description: 'Reveals one random correct letter' },

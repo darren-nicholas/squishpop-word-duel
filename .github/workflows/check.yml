@@ -16,6 +16,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - run: cp apiKeys.example.ts apiKeys.ts
       - run: npm ci
       - run: npm run check
       - run: npm run build:check
