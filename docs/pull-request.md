@@ -1,0 +1,9 @@
+SquishPop currently wipes collections on startup, exposes a provider key through the mobile dependency graph, and lets two-player hints/reward odds use the wrong profile. This change preserves existing progress, keeps word validation on the device, and corrects turn, hint, reward, and profile ownership behavior.
+
+Changes include ordered/canonical profile persistence and recovery, protected duplicate sales, per-player hint limits and extra lives, solved-hint completion, rapid-input guards, locked-out turn skipping, persistent solo rewards, accurate collection/rarity UI, release-only guards for dev controls and simulated ads, animation cleanup, safe image-generation tooling, and CI. A scoped CommonJS UUID update removes the UUID advisory without changing Expo/React Native versions.
+
+Validation passed after frozen dependency installation: TypeScript, Expo lint, 25 Node tests (including mounted-app state regressions), five Python tests, and production iOS/Android Hermes exports. All 225 prompt entries validated without generating images. Production bundles contain no Anthropic key/provider markers.
+
+The production dependency audit decreased from 23 findings to 16 high findings, propagated from two unresolved upstream advisories in braces/node-forge; current registry releases remain affected. See [docs/game-review.md](docs/game-review.md) for evidence and release requirements. Native device visuals, signed builds, purchases, real ads, parental consent, and cloud validation remain unverified or unimplemented. This PR does not deploy or establish App Store readiness.
+
+Behavior changes to review: unknown words now use local warnings rather than cloud AI; the last collected copy cannot be sold; release ad simulations are disabled; unwired VIP is labeled coming soon. Stored full-object collections are still readable; new snapshots persist catalog IDs.
