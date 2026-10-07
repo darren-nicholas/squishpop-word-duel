@@ -43,6 +43,9 @@ Rules for the "suggestion" field:
 Keep "message" under 15 words. Use "I" (you are zAIa speaking). Be warm, encouraging, and specific.`;
 
 export async function aiValidate(word: string): Promise<AiValidation> {
+  // Playtest setup may intentionally omit a key. Do not make doomed requests.
+  const key = String(ANTHROPIC_API_KEY);
+  if (!key || key.includes('REPLACE_ME')) return fallback();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -51,7 +54,7 @@ export async function aiValidate(word: string): Promise<AiValidation> {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
+        'x-api-key': key,
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
@@ -69,11 +72,8 @@ export async function aiValidate(word: string): Promise<AiValidation> {
       signal: controller.signal,
     });
 
-    clearTimeout(timeout);
-
     if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.warn('[aiValidate] API error:', res.status, errText);
+      console.warn('[aiValidate] API error:', res.status);
       return fallback();
     }
 
@@ -82,13 +82,13 @@ export async function aiValidate(word: string): Promise<AiValidation> {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
-      console.warn('[aiValidate] No JSON in response:', text);
+      console.warn('[aiValidate] No JSON in response');
       return fallback();
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
     if (typeof parsed.valid !== 'boolean' || typeof parsed.message !== 'string') {
-      console.warn('[aiValidate] Invalid JSON shape:', parsed);
+      console.warn('[aiValidate] Invalid response shape');
       return fallback();
     }
 
@@ -101,10 +101,11 @@ export async function aiValidate(word: string): Promise<AiValidation> {
           : undefined,
       source: 'llm',
     };
-  } catch (err: any) {
-    clearTimeout(timeout);
-    console.warn('[aiValidate] Request failed:', err?.message || err);
+  } catch {
+    console.warn('[aiValidate] Request failed');
     return fallback();
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

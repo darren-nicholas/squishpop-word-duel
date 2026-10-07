@@ -1,10 +1,4 @@
-// Copy this file to `apiKeys.ts` and drop in a real key.
-// `apiKeys.ts` is gitignored.
-//
-// zAIa uses Anthropic Claude Haiku to validate kid-typed secret words
-// (handles typos, suggests corrections, catches gibberish).
-//
-// Get a key: https://console.anthropic.com/
-// Model used: claude-haiku-4-5
-
-export const ANTHROPIC_API_KEY = 'sk-ant-REPLACE_ME';
+// Copy to ignored apiKeys.ts for private playtesting and enter your local key.
+// zAIa is essential spelling help for younger players; preserve her experience.
+// Move the provider key behind a backend before public distribution.
+export const ANTHROPIC_API_KEY = '';

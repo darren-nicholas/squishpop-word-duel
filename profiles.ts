@@ -3,7 +3,8 @@
 // squishy collection, stats, and avatar.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Squishy } from './squishies';
+import type { Squishy } from './squishies';
+import { SQUISHIES } from './squishies';
 
 export type Profile = {
   id: string;
@@ -18,6 +19,7 @@ export type Profile = {
   coins: number; // currency earned by selling duplicates, spent on hints
   adWatches?: { date: string; freePull: number; coins: number }; // rewarded-ad daily counters
   puzzlesPlayed?: number; // lifetime completed rounds, used for interstitial grace period
+  soloWins?: number; // reward progress belongs to this profile and survives restarts
 };
 
 // First N completed rounds (lifetime) are ad-free. After that, interstitials
@@ -81,18 +83,58 @@ const STORAGE_KEY_PROFILES = 'squishpop.profiles';
 const STORAGE_KEY_ACTIVE = 'squishpop.activeProfileId';
 
 export async function loadProfiles(): Promise<Profile[]> {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY_PROFILES);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.warn('loadProfiles failed:', e);
-    return [];
-  }
+  const raw = await AsyncStorage.getItem(STORAGE_KEY_PROFILES);
+  if (!raw) return [];
+  return decodeProfiles(raw);
 }
 
+const catalog = new Map(SQUISHIES.map((s) => [s.id, s]));
+function counter(value: unknown, fallback = 0): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error('Invalid profile counter');
+  return value as number;
+}
+
+// Validate before hydration. Corrupt storage must never become an empty array
+// that the persistence effect then writes over the player's original data.
+export function decodeProfiles(raw: string): Profile[] {
+  const data: unknown = JSON.parse(raw);
+  if (!Array.isArray(data)) throw new Error('Invalid profile storage');
+  const ids = new Set<string>();
+  return data.map((p) => {
+    if (!p || typeof p.id !== 'string' || !p.id || ids.has(p.id) ||
+        typeof p.name !== 'string' || !p.name.trim() ||
+        typeof p.avatarId !== 'string' || !Array.isArray(p.collection)) {
+      throw new Error('Invalid profile storage');
+    }
+    ids.add(p.id);
+    const collection = p.collection.map((entry: unknown) => {
+      const id = typeof entry === 'string' ? entry : (entry as { id?: unknown } | null)?.id;
+      const squishy = typeof id === 'string' ? catalog.get(id) : undefined;
+      if (!squishy) throw new Error('Unknown saved squishy');
+      // Native image handles are process-local; always restore current catalog data.
+      return squishy;
+    });
+    return {
+      id: p.id, name: p.name, avatarId: p.avatarId,
+      createdAt: counter(p.createdAt), collection,
+      matchesWon: counter(p.matchesWon), matchesPlayed: counter(p.matchesPlayed),
+      legendariesPulled: counter(p.legendariesPulled),
+      coins: counter(p.coins, 25), isVip: p.isVip === true,
+      puzzlesPlayed: counter(p.puzzlesPlayed), soloWins: counter(p.soloWins),
+      ...(p.adWatches && typeof p.adWatches.date === 'string' ? {
+        adWatches: { date: p.adWatches.date, freePull: counter(p.adWatches.freePull), coins: counter(p.adWatches.coins) },
+      } : {}),
+    };
+  });
+}
+
+let profileWrites: Promise<void> = Promise.resolve();
 export async function saveProfiles(profiles: Profile[]): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
+  const snapshot = JSON.stringify(profiles.map((p) => ({ ...p, collection: p.collection.map((s) => s.id) })));
+  const write = profileWrites.catch(() => {}).then(() => AsyncStorage.setItem(STORAGE_KEY_PROFILES, snapshot));
+  profileWrites = write;
+  await write;
 }
 
 export async function loadActiveProfileId(): Promise<string | null> {
@@ -122,10 +164,9 @@ export function createProfile(name: string, avatarId: string): Profile {
   };
 }
 
-// Sell one duplicate of a squishy. Only call when duplicateCount(profile, id) >= 1.
-// Removes ONE copy and credits coins. If called when count is 1, the squishy
-// disappears from the collection entirely (silhouette in trophy room again).
+// Sell an extra copy only. Keep the last collected copy, even under rapid taps.
 export function sellOneDuplicate(profile: Profile, squishyId: string): Profile {
+  if (duplicateCount(profile, squishyId) < 2) return profile;
   const idx = profile.collection.findIndex((s) => s.id === squishyId);
   if (idx === -1) return profile;
   const squishy = profile.collection[idx];
@@ -138,6 +179,7 @@ export function sellOneDuplicate(profile: Profile, squishyId: string): Profile {
 }
 
 export function spendCoins(profile: Profile, amount: number): Profile {
+  if (!Number.isSafeInteger(amount) || amount <= 0 || profile.coins < amount) return profile;
   return {
     ...profile,
     coins: Math.max(0, profile.coins - amount),
@@ -145,6 +187,7 @@ export function spendCoins(profile: Profile, amount: number): Profile {
 }
 
 export function addCoins(profile: Profile, amount: number): Profile {
+  if (!Number.isSafeInteger(amount) || amount <= 0 || !Number.isSafeInteger(profile.coins + amount)) return profile;
   return {
     ...profile,
     coins: profile.coins + amount,
