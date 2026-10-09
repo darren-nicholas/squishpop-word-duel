@@ -1477,7 +1477,8 @@ export default function App() {
                 Meet zAIa
               </Text>
               <Text style={{ fontSize: 12, color: '#1a1613', lineHeight: 18, marginBottom: 10 }}>
-                Your purple plush AI buddy checks if your word is real. If she doesn't know it, she'll ask: "Hmm, I don't know this one." You decide if it counts.
+                Your purple plush AI buddy checks if your word is real. If she doesn't know it, she'll ask: "Hmm, I don't know this one." You decide if it counts.{'\n\n'}
+                For multi-word phrases (like "I love you" or "Timber Ridge Elementary"), zAIa also checks if it's fair to guess. If it looks like random words strung together, she'll gently ask: "Is this really something your opponent could guess?" — your call either way.
               </Text>
 
               <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', color: '#8a6a2e', marginTop: 6, marginBottom: 4 }}>
@@ -3747,8 +3748,10 @@ function WordEntryScreen({
   const [llmResult, setLlmResult] = useState<AiValidation | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
   const [zaiaPopupOpen, setZaiaPopupOpen] = useState(false);
+  const [llmTrigger, setLlmTrigger] = useState<'unknown' | 'fairness' | null>(null);
   const normalized = input.trim().toUpperCase();
   const localValidation = validateWord(normalized);
+  const isMultiWord = normalized.trim().split(/\s+/).length > 1;
 
   // Haptic ping whenever zAIa pops up — gentle "look at me"
   useEffect(() => {
@@ -3756,10 +3759,14 @@ function WordEntryScreen({
   }, [zaiaPopupOpen]);
 
   // When input changes, debounce an LLM check if local is uncertain.
+  // Fairness-check for multi-word phrases runs on submit (see handleSubmit),
+  // not on keystroke — saves LLM calls and avoids startling the user with
+  // "zAIa is thinking..." when they're mid-typing a legitimate phrase.
   useEffect(() => {
     setLlmResult(null);
     setLlmLoading(false);
     setZaiaPopupOpen(false);
+    setLlmTrigger(null);
     if (!localValidation.warning) return;
     if (normalized.length < 3) return;
 
@@ -3767,6 +3774,7 @@ function WordEntryScreen({
     const timer = setTimeout(async () => {
       if (cancelled) return;
       setLlmLoading(true);
+      setLlmTrigger('unknown');
       const result = await aiValidate(normalized);
       if (cancelled) return;
       setLlmLoading(false);
@@ -3821,12 +3829,14 @@ function WordEntryScreen({
     if (localValidation.warning) {
       if (llmResult) {
         if (!llmResult.valid) {
+          setLlmTrigger('unknown');
           setZaiaPopupOpen(true);
           return;
         }
         // LLM already approved — fall through to lock
       } else {
         setLlmLoading(true);
+        setLlmTrigger('unknown');
         const result = await aiValidate(normalized);
         setLlmLoading(false);
         setLlmResult(result);
@@ -3838,6 +3848,20 @@ function WordEntryScreen({
       }
     } else if (!localValidation.valid) {
       return;
+    } else if (isMultiWord) {
+      // Dictionary passed, but it's a multi-word phrase — fairness check.
+      // zAIa evaluates whether the phrase is coherent/guessable.
+      // Only gatekeeps if she pushes back; silent on pass.
+      setLlmLoading(true);
+      setLlmTrigger('fairness');
+      const result = await aiValidate(normalized);
+      setLlmLoading(false);
+      setLlmResult(result);
+      if (!result.valid) {
+        setZaiaPopupOpen(true);
+        return;
+      }
+      // LLM says phrase is coherent — silent pass, fall through to lock
     }
 
     RNKeyboard.dismiss();
@@ -3972,58 +3996,118 @@ function WordEntryScreen({
             >
               zAIa says
             </Text>
-            <Text
-              style={{
-                fontSize: 18,
-                color: '#1a1613',
-                textAlign: 'center',
-                lineHeight: 24,
-                marginBottom: 20,
-                fontStyle: 'italic',
-                paddingHorizontal: 10,
-              }}
-            >
-              "{llmResult?.message}"
-            </Text>
 
-            {llmResult?.valid && (
-              <Pressable
-                style={[styles.primaryButton, { paddingHorizontal: 36 }]}
-                onPress={handleLockFromPopup}
-              >
-                <Text style={styles.primaryButtonText}>Lock it in →</Text>
-              </Pressable>
-            )}
-
-            {llmResult && !llmResult.valid && llmResult.suggestion && (
+            {/* FAIRNESS BRANCH — multi-word phrase, zAIa pushed back */}
+            {llmTrigger === 'fairness' && llmResult && !llmResult.valid ? (
               <>
+                <Text
+                  style={{
+                    fontSize: 17,
+                    color: '#1a1613',
+                    textAlign: 'center',
+                    lineHeight: 23,
+                    marginBottom: 8,
+                    fontWeight: '700',
+                    paddingHorizontal: 10,
+                  }}
+                >
+                  Hmm… I want to make sure this is fair.
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    color: '#1a1613',
+                    textAlign: 'center',
+                    lineHeight: 21,
+                    marginBottom: 8,
+                    paddingHorizontal: 10,
+                  }}
+                >
+                  "{normalized}" — is this really something your opponent could guess? Like a title, name, or saying they'd know?
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: '#7a5fa0',
+                    textAlign: 'center',
+                    marginBottom: 20,
+                    fontStyle: 'italic',
+                  }}
+                >
+                  Your call! If you think it's fair, lock it in.
+                </Text>
                 <Pressable
                   style={[
                     styles.primaryButton,
                     { paddingHorizontal: 24, marginBottom: 10 },
                   ]}
-                  onPress={() => handleUseSuggestion(llmResult.suggestion!)}
+                  onPress={handleLockFromPopup}
                 >
-                  <Text style={styles.primaryButtonText}>
-                    Use "{llmResult.suggestion}"
-                  </Text>
+                  <Text style={styles.primaryButtonText}>Yes, it's fair →</Text>
                 </Pressable>
                 <Pressable
                   style={styles.secondaryButton}
                   onPress={handleTryAgainFromPopup}
                 >
-                  <Text style={styles.secondaryButtonText}>Let me try again</Text>
+                  <Text style={styles.secondaryButtonText}>Let me try something else</Text>
                 </Pressable>
               </>
-            )}
+            ) : (
+              <>
+                <Text
+                  style={{
+                    fontSize: 18,
+                    color: '#1a1613',
+                    textAlign: 'center',
+                    lineHeight: 24,
+                    marginBottom: 20,
+                    fontStyle: 'italic',
+                    paddingHorizontal: 10,
+                  }}
+                >
+                  "{llmResult?.message}"
+                </Text>
 
-            {llmResult && !llmResult.valid && !llmResult.suggestion && (
-              <Pressable
-                style={[styles.primaryButton, { paddingHorizontal: 36 }]}
-                onPress={handleTryAgainFromPopup}
-              >
-                <Text style={styles.primaryButtonText}>Let me try again</Text>
-              </Pressable>
+                {llmResult?.valid && (
+                  <Pressable
+                    style={[styles.primaryButton, { paddingHorizontal: 36 }]}
+                    onPress={handleLockFromPopup}
+                  >
+                    <Text style={styles.primaryButtonText}>Lock it in →</Text>
+                  </Pressable>
+                )}
+
+                {llmResult && !llmResult.valid && llmResult.suggestion && (
+                  <>
+                    <Pressable
+                      style={[
+                        styles.primaryButton,
+                        { paddingHorizontal: 24, marginBottom: 10 },
+                      ]}
+                      onPress={() => handleUseSuggestion(llmResult.suggestion!)}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        Use "{llmResult.suggestion}"
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.secondaryButton}
+                      onPress={handleTryAgainFromPopup}
+                    >
+                      <Text style={styles.secondaryButtonText}>Let me try again</Text>
+                    </Pressable>
+                  </>
+                )}
+
+                {llmResult && !llmResult.valid && !llmResult.suggestion && (
+                  <Pressable
+                    style={[styles.primaryButton, { paddingHorizontal: 36 }]}
+                    onPress={handleTryAgainFromPopup}
+                  >
+                    <Text style={styles.primaryButtonText}>Let me try again</Text>
+                  </Pressable>
+                )}
+              </>
             )}
           </View>
         </View>
@@ -4798,16 +4882,54 @@ function MatchWinnerScreen({
 
       <Text style={styles.shelfHeader}>{winnerName}'s Match Haul</Text>
       <ShelfGrid squishies={winnerMatchSquishies} />
-      <Text style={{ fontSize: 12, color: '#8a6a2e', fontWeight: '600', marginBottom: 10 }}>
+      <Text
+        style={{
+          fontFamily: FONT_BOLD,
+          fontSize: 14,
+          color: '#FFF2A8',
+          marginBottom: 10,
+          textShadowColor: 'rgba(42, 26, 64, 0.9)',
+          textShadowOffset: { width: 0, height: 2 },
+          textShadowRadius: 4,
+        }}
+      >
         🏆 {winnerLifetimeTotal} total in {winnerName}'s collection
       </Text>
 
       {loserMatchSquishies.length > 0 && loserName && (
-        <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderColor: '#e8e2d5', alignItems: 'center' }}>
-          <Text style={{ fontSize: 13, color: '#1a1613', fontWeight: '600', marginBottom: 4 }}>
+        <View
+          style={{
+            marginTop: 14,
+            paddingTop: 14,
+            borderTopWidth: 1,
+            borderColor: 'rgba(255,255,255,0.25)',
+            alignItems: 'center',
+          }}
+        >
+          <Text
+            style={{
+              fontFamily: FONT_BOLD,
+              fontSize: 15,
+              color: '#FFFFFF',
+              marginBottom: 4,
+              textShadowColor: 'rgba(42, 26, 64, 0.9)',
+              textShadowOffset: { width: 0, height: 2 },
+              textShadowRadius: 4,
+            }}
+          >
             {loserName} earned {loserMatchSquishies.length} squish{loserMatchSquishies.length === 1 ? 'y' : 'ies'} this match
           </Text>
-          <Text style={{ fontSize: 11, color: '#2a7a3b', fontWeight: '600', marginBottom: 6 }}>
+          <Text
+            style={{
+              fontFamily: FONT_BOLD,
+              fontSize: 13,
+              color: '#A8F5B5',
+              marginBottom: 6,
+              textShadowColor: 'rgba(42, 26, 64, 0.9)',
+              textShadowOffset: { width: 0, height: 2 },
+              textShadowRadius: 4,
+            }}
+          >
             ✨ All kept — forever yours ✨
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 4, marginBottom: 4 }}>
@@ -4819,7 +4941,16 @@ function MatchWinnerScreen({
               />
             ))}
           </View>
-          <Text style={{ fontSize: 10, color: '#8a6a2e', fontWeight: '600' }}>
+          <Text
+            style={{
+              fontFamily: FONT_BOLD,
+              fontSize: 12,
+              color: '#FFF2A8',
+              textShadowColor: 'rgba(42, 26, 64, 0.9)',
+              textShadowOffset: { width: 0, height: 2 },
+              textShadowRadius: 4,
+            }}
+          >
             🏆 {loserLifetimeTotal} total in {loserName}'s collection
           </Text>
         </View>
